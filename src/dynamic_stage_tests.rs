@@ -27,6 +27,7 @@ fn tapered_draw_gradient_follows_documented_bilinear_coordinates() {
         corners: [[-1.0, -0.8], [-0.0625, 0.8], [0.0625, 0.8], [1.0, -0.8]],
         z: [0.0; 4],
         alpha: 1.0,
+        source_uv: [0.0, 0.0, 1.0, 1.0],
         provenance: None,
         trace: None,
     };

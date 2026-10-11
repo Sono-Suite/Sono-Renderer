@@ -95,7 +95,7 @@ fn displayholic_mv_alpha_audit() {
             let mut bg_only = frame.clone();
             bg_only.report.display_list.sprites.clear();
             bg_only.particle_draws = None;
-            bg_only.ui_values.clear();
+            bg_only.ui_state = crate::render_ui::UiFrameState::default();
             let (bg, bg_rgba) = gpu_render::capture_rgba(|| {
                 render_prepared_frame(session.render.clone(), false, bg_only).unwrap()
             });

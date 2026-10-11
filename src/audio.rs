@@ -14,13 +14,17 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, Weak,
     },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SfxMixResult {
     pub wav: Option<Vec<u8>>,
+    /// SHA-1 of the deterministic interleaved S16LE PCM payload, excluding
+    /// the WAV header. Encoded AAC bytes are intentionally not treated as the
+    /// audio reference layer because codec/container output can vary.
+    pub pcm_sha1: Option<String>,
     pub warnings: Vec<String>,
     pub unique_resources: usize,
     pub ffmpeg_decodes: usize,
@@ -34,8 +38,99 @@ struct PcmClip {
     samples: Vec<f32>,
 }
 
-static DECODED_SFX: OnceLock<Mutex<HashMap<[u8; 20], Arc<PcmClip>>>> = OnceLock::new();
+const DECODED_SFX_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
+const DECODED_SFX_CACHE_MAX_ENTRIES: usize = 128;
+
+struct CachedPcmClip {
+    clip: Arc<PcmClip>,
+    byte_len: usize,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct DecodedSfxCache {
+    clips: HashMap<[u8; 20], CachedPcmClip>,
+    retained_bytes: usize,
+    clock: u64,
+    generation: u64,
+}
+
+impl DecodedSfxCache {
+    fn get(&mut self, key: &[u8; 20]) -> Option<Arc<PcmClip>> {
+        self.clock = self.clock.wrapping_add(1);
+        let tick = self.clock;
+        let entry = self.clips.get_mut(key)?;
+        entry.last_used = tick;
+        Some(Arc::clone(&entry.clip))
+    }
+
+    fn insert(&mut self, key: [u8; 20], clip: Arc<PcmClip>) {
+        let byte_len = std::mem::size_of_val(clip.samples.as_slice());
+        if byte_len > DECODED_SFX_CACHE_MAX_BYTES {
+            return;
+        }
+        while self.clips.len() >= DECODED_SFX_CACHE_MAX_ENTRIES
+            || self.retained_bytes.saturating_add(byte_len) > DECODED_SFX_CACHE_MAX_BYTES
+        {
+            let Some(oldest) = self
+                .clips
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            if let Some(removed) = self.clips.remove(&oldest) {
+                self.retained_bytes = self.retained_bytes.saturating_sub(removed.byte_len);
+            }
+        }
+        self.clock = self.clock.wrapping_add(1);
+        self.retained_bytes = self.retained_bytes.saturating_add(byte_len);
+        self.clips.insert(
+            key,
+            CachedPcmClip {
+                clip,
+                byte_len,
+                last_used: self.clock,
+            },
+        );
+    }
+
+    fn clear(&mut self) -> usize {
+        let count = self.clips.len();
+        self.clips.clear();
+        self.retained_bytes = 0;
+        self.generation = self.generation.wrapping_add(1);
+        count
+    }
+
+    fn insert_if_generation(&mut self, generation: u64, key: [u8; 20], clip: Arc<PcmClip>) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.insert(key, clip);
+        true
+    }
+}
+
+static DECODED_SFX: OnceLock<Mutex<DecodedSfxCache>> = OnceLock::new();
 static SFX_FFMPEG_DECODES: AtomicUsize = AtomicUsize::new(0);
+type DecodedSfxGateRegistry = Mutex<HashMap<[u8; 20], Weak<Mutex<()>>>>;
+static DECODED_SFX_GATES: OnceLock<DecodedSfxGateRegistry> = OnceLock::new();
+
+fn decoded_sfx_gate(key: [u8; 20]) -> Result<Arc<Mutex<()>>> {
+    let mut gates = DECODED_SFX_GATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("SFX decode gate map poisoned"))?;
+    gates.retain(|_, gate| gate.strong_count() != 0);
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(key, Arc::downgrade(&gate));
+    Ok(gate)
+}
 
 /// Mix supported Watch play and loop events into stereo PCM16 WAV at 44.1 kHz.
 /// Clip encodings outside uncompressed PCM16 mono/stereo are rejected explicitly.
@@ -48,6 +143,32 @@ pub fn mix_effects_wav(
     loop_stops: &[ScheduledLoopedEffectStop],
     timeline_start: f64,
     duration: f64,
+) -> Result<SfxMixResult> {
+    mix_effects_wav_with_pcm_hash(
+        assets,
+        bindings,
+        events,
+        scheduled,
+        loop_starts,
+        loop_stops,
+        timeline_start,
+        duration,
+        false,
+    )
+}
+
+/// Profiling-only SFX mixer entry point. Ordinary rendering leaves PCM hashing
+/// disabled; regression media capture opts in so it can compare pre-AAC data.
+pub(crate) fn mix_effects_wav_with_pcm_hash(
+    assets: &EffectAssets,
+    bindings: &BTreeMap<i64, String>,
+    events: &[AudioEffectEvent],
+    scheduled: &[ScheduledEffect],
+    loop_starts: &[ScheduledLoopedEffect],
+    loop_stops: &[ScheduledLoopedEffectStop],
+    timeline_start: f64,
+    duration: f64,
+    capture_pcm_hash: bool,
 ) -> Result<SfxMixResult> {
     if !timeline_start.is_finite() || !duration.is_finite() || duration <= 0.0 {
         bail!("SFX mix timeline must be finite and duration positive");
@@ -127,6 +248,7 @@ pub fn mix_effects_wav(
     if active.is_empty() {
         return Ok(SfxMixResult {
             wav: None,
+            pcm_sha1: None,
             warnings: Vec::new(),
             unique_resources: 0,
             ffmpeg_decodes: 0,
@@ -229,6 +351,7 @@ pub fn mix_effects_wav(
     if !has_playable_event {
         return Ok(SfxMixResult {
             wav: None,
+            pcm_sha1: None,
             warnings,
             unique_resources: decoded.len(),
             ffmpeg_decodes,
@@ -242,8 +365,10 @@ pub fn mix_effects_wav(
             pcm.extend_from_slice(&((value * 32767.0).round() as i16).to_le_bytes());
         }
     }
+    let pcm_sha1 = capture_pcm_hash.then(|| format!("{:x}", sha1::Sha1::digest(&pcm)));
     Ok(SfxMixResult {
         wav: Some(wav_header(sample_rate, 2, &pcm)),
+        pcm_sha1,
         warnings,
         unique_resources: decoded.len(),
         ffmpeg_decodes,
@@ -268,15 +393,38 @@ pub(crate) fn clip_duration(bytes: &[u8]) -> Result<f64> {
 /// resource is transcoded at most once during this process.
 fn decode_sfx_cached(bytes: &[u8]) -> Result<(Arc<PcmClip>, bool)> {
     let key: [u8; 20] = sha1::Sha1::digest(bytes).into();
-    let cache = DECODED_SFX.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache
+    let cache = DECODED_SFX.get_or_init(|| Mutex::new(DecodedSfxCache::default()));
+    if let Some(clip) = cache
         .lock()
-        .map_err(|_| anyhow::anyhow!("SFX decode cache poisoned"))?;
-    if let Some(clip) = cache.get(&key) {
-        return Ok((Arc::clone(clip), false));
+        .map_err(|_| anyhow::anyhow!("SFX decode cache poisoned"))?
+        .get(&key)
+    {
+        return Ok((clip, false));
     }
+
+    let gate = decoded_sfx_gate(key)?;
+    let _gate_guard = gate
+        .lock()
+        .map_err(|_| anyhow::anyhow!("SFX per-content decode gate poisoned"))?;
+    let (generation, cached) = {
+        let mut cache = cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("SFX decode cache poisoned"))?;
+        (cache.generation, cache.get(&key))
+    };
+    if let Some(clip) = cached {
+        return Ok((clip, false));
+    }
+
+    // Decoding happens outside the shared LRU lock. Same-resource callers are
+    // serialized by the content gate, while unrelated clips can decode in
+    // parallel. A clear advances generation so this result cannot repopulate
+    // the cache after the user's clear action.
     let clip = Arc::new(decode_sfx_ffmpeg(bytes)?);
-    cache.insert(key, Arc::clone(&clip));
+    cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("SFX decode cache poisoned"))?
+        .insert_if_generation(generation, key, Arc::clone(&clip));
     SFX_FFMPEG_DECODES.fetch_add(1, Ordering::Relaxed);
     Ok((clip, true))
 }
@@ -284,9 +432,29 @@ fn decode_sfx_cached(bytes: &[u8]) -> Result<(Arc<PcmClip>, bool)> {
 pub(crate) fn decode_cache_stats() -> (usize, usize) {
     let resources = DECODED_SFX
         .get()
-        .and_then(|cache| cache.lock().ok().map(|cache| cache.len()))
+        .and_then(|cache| cache.lock().ok().map(|cache| cache.clips.len()))
         .unwrap_or(0);
     (resources, SFX_FFMPEG_DECODES.load(Ordering::Relaxed))
+}
+
+pub(crate) fn decoded_sfx_cache_info() -> (usize, u64, u64) {
+    let (entries, bytes) = DECODED_SFX
+        .get()
+        .and_then(|cache| {
+            cache
+                .lock()
+                .ok()
+                .map(|cache| (cache.clips.len(), cache.retained_bytes as u64))
+        })
+        .unwrap_or_default();
+    (entries, bytes, DECODED_SFX_CACHE_MAX_BYTES as u64)
+}
+
+pub(crate) fn clear_decoded_sfx_cache() -> usize {
+    DECODED_SFX
+        .get()
+        .and_then(|cache| cache.lock().ok().map(|mut cache| cache.clear()))
+        .unwrap_or(0)
 }
 
 fn decode_sfx_ffmpeg(bytes: &[u8]) -> Result<PcmClip> {
@@ -445,6 +613,70 @@ pub(crate) fn wav_header(rate: u32, channels: u16, pcm: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoded_sfx_cache_is_lru_bounded_and_clear_keeps_active_clips_alive() {
+        fn key(index: u64) -> [u8; 20] {
+            let mut key = [0; 20];
+            key[..8].copy_from_slice(&index.to_le_bytes());
+            key
+        }
+        let mut cache = DecodedSfxCache::default();
+        for index in 0..DECODED_SFX_CACHE_MAX_ENTRIES as u64 {
+            cache.insert(
+                key(index),
+                Arc::new(PcmClip {
+                    rate: 44_100,
+                    channels: 1,
+                    samples: vec![index as f32],
+                }),
+            );
+        }
+        let newest = key(0);
+        let active = cache.get(&newest).unwrap();
+        let one = key(1);
+        cache.insert(
+            key(999),
+            Arc::new(PcmClip {
+                rate: 44_100,
+                channels: 1,
+                samples: vec![999.0],
+            }),
+        );
+        assert_eq!(cache.clips.len(), DECODED_SFX_CACHE_MAX_ENTRIES);
+        assert!(cache.clips.contains_key(&newest));
+        assert!(!cache.clips.contains_key(&one));
+        assert_eq!(cache.retained_bytes, DECODED_SFX_CACHE_MAX_ENTRIES * 4);
+        assert_eq!(cache.clear(), DECODED_SFX_CACHE_MAX_ENTRIES);
+        assert_eq!(active.samples, [0.0]);
+        assert_eq!(cache.retained_bytes, 0);
+    }
+
+    #[test]
+    fn decoded_sfx_gates_are_per_content_and_clear_invalidates_inflight_insert() {
+        let key = [7; 20];
+        let same = decoded_sfx_gate(key).unwrap();
+        let same_again = decoded_sfx_gate(key).unwrap();
+        let unrelated = decoded_sfx_gate([8; 20]).unwrap();
+        assert!(Arc::ptr_eq(&same, &same_again));
+        assert!(!Arc::ptr_eq(&same, &unrelated));
+        let held = same.lock().unwrap();
+        assert!(same_again.try_lock().is_err());
+        assert!(unrelated.try_lock().is_ok());
+        drop(held);
+
+        let mut cache = DecodedSfxCache::default();
+        let generation = cache.generation;
+        cache.clear();
+        let clip = Arc::new(PcmClip {
+            rate: 44_100,
+            channels: 1,
+            samples: vec![1.0],
+        });
+        assert!(!cache.insert_if_generation(generation, key, clip));
+        assert!(cache.clips.is_empty());
+    }
+
     #[test]
     fn sfx_born_before_window_is_clipped_instead_of_restarted() {
         let pcm: Vec<_> = (0..4410_i16).flat_map(i16::to_le_bytes).collect();
@@ -706,6 +938,10 @@ mod tests {
             },
         ];
         let result = mix_effects_wav(&assets, &bindings, &events, &[], &[], &[], 0.0, 0.1).unwrap();
+        assert!(
+            result.pcm_sha1.is_none(),
+            "ordinary SFX mixing must not hash PCM"
+        );
         let wav = result.wav.unwrap();
         assert_eq!(&wav[..4], b"RIFF");
         assert!(wav[44..].iter().any(|byte| *byte != 0));
@@ -718,6 +954,23 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("absent")));
+
+        let profiled = mix_effects_wav_with_pcm_hash(
+            &assets,
+            &bindings,
+            &events,
+            &[],
+            &[],
+            &[],
+            0.0,
+            0.1,
+            true,
+        )
+        .unwrap();
+        assert!(
+            profiled.pcm_sha1.is_some(),
+            "opt-in media capture hashes PCM"
+        );
     }
 
     #[test]

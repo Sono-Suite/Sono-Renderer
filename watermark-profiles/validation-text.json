@@ -1,0 +1,45 @@
+{
+  "enabled": true,
+  "attribution": {
+    "font_size": 16.0,
+    "opacity": 0.7,
+    "margin": 10.0
+  },
+  "moving": {
+    "enabled": true,
+    "content": {
+      "kind": "text",
+      "text": "WATERMARK • SEED 42"
+    },
+    "font_size": 36.0,
+    "image_height": 128.0,
+    "opacity": 0.38,
+    "scale": 1.0,
+    "rotation_degrees": -8.0,
+    "color": [100, 220, 255, 255],
+    "start": [0.5, 0.55],
+    "anchor": "center",
+    "bounds": [0.04, 0.05, 0.92, 0.88],
+    "movement": {
+      "kind": "waypoints",
+      "points": [[0.78, 0.27], [0.73, 0.74], [0.28, 0.68]],
+      "segment_seconds": 4.0,
+      "interpolation": "smooth-step",
+      "repeat": true
+    },
+    "timing": {
+      "start_time": 20.0,
+      "duration": 12.0,
+      "repeat": true
+    },
+    "animation": {
+      "period_seconds": 4.0,
+      "scale_amplitude": 0.04,
+      "rotation_amplitude_degrees": 3.0,
+      "opacity_amplitude": 0.08,
+      "phase_radians": 0.0
+    },
+    "layer": "topmost",
+    "seed": 42
+  }
+}

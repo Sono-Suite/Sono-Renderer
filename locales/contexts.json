@@ -1,0 +1,8 @@
+{
+  "home.render.title":"Action card. Starts the simple engine + LevelData + resources to MP4 workflow.",
+  "home.chart.title":"Action card for authoring canonical Sonolus LevelData. ‘Chart’ is a product workflow name, not a translated engine identifier.",
+  "home.video.title":"Action card for the standalone non-Sonolus video editor. Do not imply an engine is required.",
+  "chart.generic_mode":"Status label for schema-free raw LevelData editing. It does not mean gameplay semantics have been inferred.",
+  "presentation.description":"The editor remains usable with ordinary media and does not initialize Sonolus runtime components unless the user adds a gameplay source.",
+  "settings.language":"Application interface language only. It never changes project language, subtitle text, LevelData, or rendered output."
+}

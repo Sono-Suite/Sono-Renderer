@@ -27,6 +27,8 @@ use std::{
 
 #[derive(Debug, Serialize)]
 pub struct ExportReport {
+    pub performance: crate::performance::RenderPerformanceRecord,
+    pub diagnostics: crate::render_diagnostics::RenderDiagnosticRecord,
     pub watch_traversals: u32,
     pub audio_prepass_checkpoints: Vec<crate::audio_prepass_profile::AudioPrepassCheckpoint>,
     pub mv: Option<std::path::PathBuf>,
@@ -44,6 +46,9 @@ pub struct ExportReport {
     pub bgm_offset: f64,
     pub audio_window: AudioWindow,
     pub sfx_event_sha1: String,
+    /// Hash of mixed, pre-AAC SFX samples; absent when no playable SFX PCM was
+    /// produced. Compressed audio bytes are not a stable PCM oracle.
+    pub sfx_pcm_sha1: Option<String>,
     pub sfx_event_counts: SfxEventCounts,
     pub sfx_playback_events: usize,
     pub sfx_resources_used: usize,
@@ -156,6 +161,8 @@ pub struct ExportRequest<'a> {
     pub fps: u32,
     pub width: u32,
     pub height: u32,
+    pub video_crf: u8,
+    pub video_preset: crate::render::VideoPreset,
     pub trace_entity_id: Option<usize>,
     pub level_option_overrides: &'a [(usize, f64)],
     pub skin_name: Option<&'a str>,
@@ -165,6 +172,8 @@ pub struct ExportRequest<'a> {
     pub ui: &'a crate::render_ui::RendererUiConfig,
     pub backend: crate::render::RenderBackend,
     pub execution_mode: crate::sono_gcc::WatchExecutionMode,
+    pub watch_compatibility_policy: crate::runtime::WatchCompatibilityPolicy,
+    pub watch_random_seed: u64,
     pub parallel_watch_updates: bool,
     pub watch_workers: Option<usize>,
     pub compile_sono_gcc_on_demand: bool,
@@ -209,6 +218,15 @@ pub fn export_config_controlled(
     sink: crate::export_progress::ProgressSink,
     control: crate::export_control::ExportControl,
 ) -> Result<ExportReport> {
+    export_config_with_tools_controlled(config, sink, ffmpeg::resolve, control)
+}
+
+fn export_config_with_tools_controlled(
+    config: &RenderConfig,
+    sink: crate::export_progress::ProgressSink,
+    resolve_tools: impl FnOnce() -> Result<ffmpeg::FfmpegInstallation>,
+    control: crate::export_control::ExportControl,
+) -> Result<ExportReport> {
     config.validate()?;
     control.check()?;
     let output = config
@@ -239,6 +257,8 @@ pub fn export_config_controlled(
             fps: config.fps,
             width: config.width,
             height: config.height,
+            video_crf: config.video_crf,
+            video_preset: config.video_preset,
             trace_entity_id: config.trace_entity_id,
             level_option_overrides: &options,
             skin_name: config.skin.as_deref(),
@@ -248,6 +268,8 @@ pub fn export_config_controlled(
             ui: &config.ui,
             backend: config.backend,
             execution_mode: config.execution_mode,
+            watch_compatibility_policy: config.watch_compatibility_policy,
+            watch_random_seed: config.watch_random_seed,
             parallel_watch_updates: config.parallel_watch_updates,
             watch_workers: config.watch_workers,
             compile_sono_gcc_on_demand: config.compile_sono_gcc_on_demand,
@@ -258,7 +280,7 @@ pub fn export_config_controlled(
             frame_pipeline: config.frame_pipeline,
         },
         sink,
-        ffmpeg::resolve,
+        resolve_tools,
         control,
     )
 }
@@ -313,6 +335,8 @@ fn export_using_tools_controlled(
     use crate::export_progress::{ExportPhase, ProgressTracker, ProgressWriter};
     let progress = ProgressTracker::new(sink);
     progress.phase(ExportPhase::Preparing, None);
+    let export_started_at = Instant::now();
+    let export_started_unix_ms = crate::performance::unix_time_ms();
     let export_start = request.profile.then(Instant::now);
     let mut profile = request.profile.then(|| {
         crate::profiling::ProfileCollector::new(
@@ -439,6 +463,7 @@ fn export_using_tools_controlled(
     } else {
         std::collections::BTreeMap::new()
     };
+    let mut initial_sono_gcc_metrics = None;
     let chart_end = if request.whole_chart {
         let mut discovery = EventSession::new_configured_with_sources(
             &package.watch,
@@ -463,17 +488,24 @@ fn export_using_tools_controlled(
             request.execution_mode,
             request.compile_sono_gcc_on_demand,
         );
+        discovery.set_watch_compatibility(
+            request.watch_compatibility_policy,
+            request.watch_random_seed,
+        )?;
         discovery.set_parallel_updates(request.parallel_watch_updates, request.watch_workers)?;
         discovery.set_export_control(control.clone());
         let end = crate::export_end::discover(
-            discovery,
+            &mut discovery,
             request.fps,
-            bgm_source_duration.map(|d| (d - bgm_offset).max(0.0)),
+            bgm_source_duration.map(|duration| {
+                crate::export_timeline::media_to_watch_time(duration, bgm_offset).max(0.0)
+            }),
             &effect_assets,
             &bindings,
             Some(&progress),
             &package.watch,
         )?;
+        initial_sono_gcc_metrics = discovery.performance_compile_metrics();
         control.log(format!(
             "Whole-chart end: {:.6}s ({})",
             end.watch_end, end.confidence
@@ -500,6 +532,7 @@ fn export_using_tools_controlled(
 
     let watch_traversals = std::cell::Cell::new(0);
     let watch_execution_status = std::cell::RefCell::new(String::new());
+    let sono_gcc_metrics = std::cell::RefCell::new(initial_sono_gcc_metrics);
     let make_session = || {
         let mut session = FrameSession::new_configured_with_sources(
             &package.watch,
@@ -528,7 +561,14 @@ fn export_using_tools_controlled(
             request.execution_mode,
             request.compile_sono_gcc_on_demand,
         );
+        session.set_watch_compatibility(
+            request.watch_compatibility_policy,
+            request.watch_random_seed,
+        )?;
         session.set_parallel_updates(request.parallel_watch_updates, request.watch_workers)?;
+        if sono_gcc_metrics.borrow().is_none() {
+            *sono_gcc_metrics.borrow_mut() = session.performance_compile_metrics();
+        }
         *watch_execution_status.borrow_mut() = format!(
             "{}; {}",
             session.execution_mode_status(),
@@ -583,6 +623,9 @@ fn export_using_tools_controlled(
                 .collect::<Vec<_>>(),
         )
     });
+    // FFmpeg process startup and the streaming FrameSession/resource setup are
+    // preparation work. Keep them out of the Rendering phase wall span.
+    progress.phase(ExportPhase::Preparing, Some(range.frame_count));
     let ffmpeg_start = request.profile.then(Instant::now);
     let mut command = Command::new(&installation.ffmpeg);
     crate::export_control::hide_child_window(&mut command);
@@ -605,6 +648,7 @@ fn export_using_tools_controlled(
     // duration exactly. FFmpeg's default timescale can round rates such as 239
     // FPS (for short clips, 27 frames were probed as 240 FPS).
     let video_track_timescale = request.fps.to_string();
+    let video_crf = request.video_crf.to_string();
     command.args([
         "-vf",
         "format=yuv420p",
@@ -615,9 +659,9 @@ fn export_using_tools_controlled(
         "-c:v",
         "libx264",
         "-preset",
-        "medium",
+        request.video_preset.ffmpeg_name(),
         "-crf",
-        "18",
+        &video_crf,
         "-pix_fmt",
         "yuv420p",
         "-video_track_timescale",
@@ -662,7 +706,6 @@ fn export_using_tools_controlled(
     }
 
     let mut frame_pipeline_stats = None;
-    progress.phase(ExportPhase::Rendering, None);
     let stdin = child
         .stdin
         .take()
@@ -683,6 +726,7 @@ fn export_using_tools_controlled(
             );
             p.begin_render();
         }
+        progress.phase(ExportPhase::Rendering, None);
         let frames = if request.frame_pipeline {
             match stream_frames_pipelined(
                 streaming_session,
@@ -831,7 +875,7 @@ fn export_using_tools_controlled(
         .transpose()?;
     let (events, scheduled, loop_starts, loop_stops) = audio_requests;
     let effect_mix = if request.sfx_enabled {
-        crate::audio::mix_effects_wav(
+        crate::audio::mix_effects_wav_with_pcm_hash(
             &effect_assets,
             &bindings,
             &events,
@@ -840,10 +884,12 @@ fn export_using_tools_controlled(
             &loop_stops,
             timeline.watch_start,
             timeline.duration,
+            request.profile,
         )?
     } else {
         crate::audio::SfxMixResult {
             wav: None,
+            pcm_sha1: None,
             warnings: vec![],
             unique_resources: 0,
             ffmpeg_decodes: 0,
@@ -990,7 +1036,113 @@ fn export_using_tools_controlled(
         .map_err(|error| error.error)
         .context("publishing validated export")?;
     progress.phase(ExportPhase::Complete, None);
+    let mut stage_timings = progress
+        .phase_timings()
+        .into_iter()
+        .map(|(phase, elapsed)| crate::performance::stage(format!("{phase:?}"), elapsed, 1))
+        .collect::<Vec<_>>();
+    if let Some(profile) = &profile {
+        stage_timings.extend(profile.attribution_timings());
+    }
+    let mut performance_config = RenderConfig::default();
+    performance_config.engine = request.engine.to_path_buf();
+    performance_config.resources = request.resources.to_path_buf();
+    performance_config.level = request.level.to_path_buf();
+    performance_config.music = request.bgm_enabled.then(|| request.music.to_path_buf());
+    performance_config.mv = request.mv.map(Path::to_path_buf);
+    performance_config.mv_enabled = request.mv.is_some();
+    performance_config.mv_background = request.mv_background;
+    performance_config.resource_overrides = request.resource_overrides.clone();
+    performance_config.output = Some(request.output.to_path_buf());
+    performance_config.start_time = request.start_time;
+    performance_config.duration = request.duration;
+    performance_config.whole_chart = request.whole_chart;
+    performance_config.fps = request.fps;
+    performance_config.width = request.width;
+    performance_config.height = request.height;
+    performance_config.video_crf = request.video_crf;
+    performance_config.video_preset = request.video_preset;
+    performance_config.level_options = request
+        .level_option_overrides
+        .iter()
+        .map(|(index, value)| crate::render::LevelOptionValue {
+            index: *index,
+            value: *value,
+        })
+        .collect();
+    performance_config.skin = request.skin_name.map(str::to_owned);
+    performance_config.layers = crate::render::RenderLayers {
+        particles: request.particles_enabled,
+        sfx: request.sfx_enabled,
+        bgm: request.bgm_enabled,
+    };
+    performance_config.ui = request.ui.clone();
+    performance_config.backend = request.backend;
+    performance_config.execution_mode = request.execution_mode;
+    performance_config.parallel_watch_updates = request.parallel_watch_updates;
+    performance_config.watch_workers = request.watch_workers;
+    performance_config.compile_sono_gcc_on_demand = request.compile_sono_gcc_on_demand;
+    performance_config.profile = request.profile;
+    performance_config.profile_frames = request.profile_frames;
+    performance_config.validate_determinism = request.validate_determinism;
+    performance_config.concurrent_sfx_prepass = request.concurrent_sfx_prepass;
+    performance_config.frame_pipeline = request.frame_pipeline;
+    let mut performance = crate::performance::RenderPerformanceRecord::new(
+        &performance_config,
+        export_started_unix_ms,
+        crate::performance::unix_time_ms(),
+        export_started_at.elapsed(),
+        stage_timings,
+        frame_pipeline_stats
+            .as_ref()
+            .map(crate::performance::pipeline),
+        range.frame_count,
+        stream_runtime_frames,
+        stream_callbacks,
+        stream_evaluations,
+        stream_sono_gcc_regions_executed,
+        watch_execution_status.clone(),
+    );
+    if let Some(profile) = &profile {
+        performance.environment.gpu_identity = profile.adapter_identity();
+    }
+    performance.sono_gcc_compilation = sono_gcc_metrics.into_inner();
+    if let Some(metrics) = &performance.sono_gcc_compilation {
+        performance.gcc_cache_state = Some(metrics.cache_state.clone());
+    }
+    let exclusive_phase_ms = performance
+        .stage_timings
+        .iter()
+        .filter(|stage| stage.semantics == crate::performance::StageSemantics::ExclusiveWallSpan)
+        .map(|stage| stage.duration_ms)
+        .sum::<f64>();
+    let bookkeeping_residual_ms = performance.execution_time_ms - exclusive_phase_ms;
+    if bookkeeping_residual_ms > 0.0 {
+        performance.stage_timings.push(crate::performance::stage(
+            "Export setup and record finalization",
+            Duration::from_secs_f64(bookkeeping_residual_ms / 1000.0),
+            1,
+        ));
+    }
+    let ffmpeg_source = match &installation.source {
+        ffmpeg::FfmpegSource::SharedAddons => "shared addons".to_owned(),
+        ffmpeg::FfmpegSource::Managed => "managed".to_owned(),
+    };
+    let mut diagnostics = crate::render_diagnostics::RenderDiagnosticRecord::from_export(
+        &performance,
+        &ffmpeg_source,
+        &probe,
+        deterministic_frame_hashes_match,
+    );
+    let (particle_warnings, watch_warnings): (Vec<_>, Vec<_>) = control
+        .logged_once_messages()
+        .into_iter()
+        .partition(|warning| warning.starts_with("particle resource "));
+    diagnostics.append_watch_compatibility_warnings(watch_warnings);
+    diagnostics.append_particle_resource_warnings(particle_warnings);
     Ok(ExportReport {
+        performance,
+        diagnostics,
         watch_traversals: watch_traversals.get(),
         audio_prepass_checkpoints,
         mv: request.mv.map(Path::to_path_buf),
@@ -998,10 +1150,7 @@ fn export_using_tools_controlled(
         chart_end,
         bgm_source_duration,
         bgm_pcm_sample_frames: bgm_pcm.as_ref().map(|_| timeline.audio_sample_frames),
-        ffmpeg_source: match installation.source {
-            ffmpeg::FfmpegSource::SharedAddons => "shared addons".to_owned(),
-            ffmpeg::FfmpegSource::Managed => "managed".to_owned(),
-        },
+        ffmpeg_source,
         ffmpeg_path: installation.ffmpeg.display().to_string(),
         ffprobe_path: installation.ffprobe.display().to_string(),
         submitted_frames: range.frame_count,
@@ -1011,6 +1160,7 @@ fn export_using_tools_controlled(
         bgm_offset,
         audio_window: audio,
         sfx_event_sha1,
+        sfx_pcm_sha1: effect_mix.pcm_sha1.clone(),
         sfx_event_counts,
         sfx_playback_events: effect_mix.playback_events,
         sfx_resources_used: effect_mix.unique_resources,
@@ -1924,6 +2074,67 @@ fn parse_rational(value: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore = "real FFmpeg export integration: run explicitly for the current Windows toolchain"]
+    fn real_sono_overlay_chart_export_contains_gameplay_ui() {
+        let tools = crate::export_mv::tests::tools()
+            .expect("checked-in FFmpeg 8.1 pair for real export validation");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let output_directory = repository.join("target/acceptance-output");
+        std::fs::create_dir_all(&output_directory).unwrap();
+        let mut config = RenderConfig::default();
+        config.engine = repository.join("TestingSuite/Next RUSH/engine/Next RUSH.zip");
+        config.resources =
+            repository.join("TestingSuite/Next Sekai Engine/skin/ProSeka Faithful 0.8.3.scp");
+        config.level = repository.join("TestingSuite/Next Sekai Engine/levels/Various Artists - Baumkuchen x Retry Now/Baumkuchen x Retry Now.json.gz");
+        config.output = Some(output_directory.join(format!(
+            "sono-overlay-scoring-{}.mp4",
+            crate::performance::unix_time_ms()
+        )));
+        config.start_time = 0.0;
+        config.duration = 4.0;
+        config.fps = 24;
+        config.width = 640;
+        config.height = 360;
+        config.level_options = vec![
+            crate::render::LevelOptionValue {
+                index: 1,
+                value: 10.8,
+            },
+            crate::render::LevelOptionValue {
+                index: 22,
+                value: 1.0,
+            },
+        ];
+        config.layers.particles = false;
+        config.layers.sfx = false;
+        config.layers.bgm = false;
+        config.backend = crate::render::RenderBackend::Cpu;
+        config.ui = crate::render_ui::RendererUiConfig::reference_default();
+        config.ui.enabled = true;
+        config.ui.scoring.as_mut().unwrap().forecast.level_rating = Some(14.0);
+
+        let report = export_config_with_tools_controlled(
+            &config,
+            Box::new(|_| {}),
+            || Ok(tools.clone()),
+            crate::export_control::ExportControl::default(),
+        )
+        .unwrap();
+        assert_eq!(report.submitted_frames, 96);
+        assert!(config.output.as_ref().unwrap().metadata().unwrap().len() > 0);
+        assert_eq!(report.probe["streams"][0]["codec_name"], "h264");
+        assert_eq!(report.probe["streams"][0]["width"], 640);
+        assert_eq!(report.probe["streams"][0]["height"], 360);
+        assert!(report
+            .watch_execution_status
+            .contains("Sono VM / interpreter selected"));
+        println!(
+            "Generated real gameplay-HUD MP4: {}",
+            config.output.as_ref().unwrap().display()
+        );
+    }
+
     struct SlowSink(Duration);
 
     impl Write for SlowSink {
@@ -2133,6 +2344,8 @@ mod tests {
                         fps: 12,
                         width: 64,
                         height: 36,
+                        video_crf: 18,
+                        video_preset: crate::render::VideoPreset::Medium,
                         trace_entity_id: None,
                         level_option_overrides: &[],
                         skin_name: None,
@@ -2142,6 +2355,9 @@ mod tests {
                         ui: &ui,
                         backend,
                         execution_mode: crate::sono_gcc::WatchExecutionMode::Interpreter,
+                        watch_compatibility_policy:
+                            crate::runtime::WatchCompatibilityPolicy::Permissive,
+                        watch_random_seed: crate::runtime::DEFAULT_WATCH_RANDOM_SEED,
                         parallel_watch_updates: true,
                         watch_workers: None,
                         compile_sono_gcc_on_demand: true,
@@ -2155,6 +2371,32 @@ mod tests {
                     || Ok(tools.clone()),
                 )
                 .unwrap();
+                assert_eq!(report.performance.workload.execution_mode, "interpreter");
+                assert_eq!(report.performance.frames, report.submitted_frames);
+                assert_eq!(report.performance.pipeline_overlap.is_some(), pipeline);
+                assert!(report.performance.profiling_detail_enabled);
+                assert_eq!(
+                    report.diagnostics.performance_record_id.as_deref(),
+                    Some(report.performance.id.as_str())
+                );
+                let validation = &report.diagnostics.media.as_ref().unwrap().output_validation;
+                assert!(validation.ffprobe_succeeded);
+                assert_eq!(validation.submitted_frames, report.submitted_frames);
+                assert_eq!(validation.width, Some(64));
+                assert_eq!(validation.height, Some(36));
+                for phase in [
+                    "Preparing",
+                    "Rendering",
+                    "AudioMixing",
+                    "AudioEncoding",
+                    "Finalizing",
+                ] {
+                    assert!(report.performance.stage_timings.iter().any(|stage| {
+                        stage.name == phase
+                            && stage.semantics
+                                == crate::performance::StageSemantics::ExclusiveWallSpan
+                    }));
+                }
                 let invariants = (
                     report.submitted_frames,
                     report.timeline.watch_start.to_bits(),
@@ -2244,6 +2486,367 @@ mod tests {
             }
         }
 
+        // The same real renderer is also exercised through the persistent job
+        // manager: a failed job must leave its sibling queued job runnable,
+        // and the successful result is atomically published at the requested
+        // output path without exposing the staging filename.
+        let queue_store = fixture.path().join("render-jobs.json");
+        let broken_engine = fixture.path().join("removed-engine.zip");
+        fs::copy(&engine, &broken_engine).unwrap();
+        let make_job_config = |engine_path: std::path::PathBuf, output: std::path::PathBuf| {
+            let mut config = crate::render::RenderConfig::default();
+            config.engine = engine_path;
+            config.resources = resources.clone();
+            config.level = level_path.clone();
+            config.output = Some(output);
+            config.duration = 2.0;
+            config.fps = 12;
+            config.width = 64;
+            config.height = 36;
+            config.backend = crate::render::RenderBackend::Cpu;
+            config.job_manager.max_concurrent_jobs = 2;
+            config.layers.particles = false;
+            config.layers.sfx = false;
+            config.layers.bgm = false;
+            config.notifications.enabled = false;
+            config
+        };
+        let manager = crate::job_manager::RenderJobManager::open_at(
+            &queue_store,
+            crate::job_manager::JobManagerConfig {
+                max_concurrent_jobs: 2,
+                ..crate::job_manager::JobManagerConfig::default()
+            },
+        )
+        .unwrap();
+        let profile_manager = crate::config_profiles::ConfigProfileManager::open_at(
+            fixture.path().join("config-profiles.json"),
+        )
+        .unwrap();
+        let failed_id = manager
+            .enqueue(
+                make_job_config(
+                    broken_engine.clone(),
+                    fixture.path().join("should-not-exist.mp4"),
+                ),
+                None,
+            )
+            .unwrap();
+        fs::remove_file(&broken_engine).unwrap();
+        let queued_output = fixture.path().join("job-manager-render.mp4");
+        let vm_profile_config = make_job_config(engine.clone(), queued_output.clone());
+        let vm_profile = profile_manager
+            .create("Queue VM fixture", vm_profile_config.clone())
+            .unwrap();
+        let completed_id = manager
+            .enqueue_from_profile(
+                vm_profile_config.clone(),
+                None,
+                vm_profile.id.clone(),
+                vm_profile.name.clone(),
+            )
+            .unwrap();
+        let mut updated_vm_profile = vm_profile_config.clone();
+        updated_vm_profile.duration = 4.0;
+        profile_manager
+            .update(&vm_profile.id, updated_vm_profile)
+            .unwrap();
+        let gcc_output = fixture.path().join("job-manager-gcc-render.mp4");
+        let mut gcc_config = make_job_config(engine.clone(), gcc_output.clone());
+        gcc_config.execution_mode = crate::sono_gcc::WatchExecutionMode::SonoGcc;
+        let gcc_profile = profile_manager
+            .create("Queue GCC fixture", gcc_config.clone())
+            .unwrap();
+        let gcc_id = manager
+            .enqueue_from_profile(
+                gcc_config,
+                None,
+                gcc_profile.id.clone(),
+                gcc_profile.name.clone(),
+            )
+            .unwrap();
+        profile_manager.delete(&gcc_profile.id).unwrap();
+        manager.start().unwrap();
+        manager.wait_until_idle().unwrap();
+        let failed = manager.inspect(&failed_id).unwrap();
+        let completed = manager.inspect(&completed_id).unwrap();
+        let gcc = manager.inspect(&gcc_id).unwrap();
+        assert_eq!(failed.state, crate::job_manager::JobState::Failed);
+        assert!(failed.diagnostic.is_some());
+        assert_eq!(completed.state, crate::job_manager::JobState::Completed);
+        assert_eq!(gcc.state, crate::job_manager::JobState::Completed);
+        assert_eq!(
+            completed.profile_id.as_deref(),
+            Some(vm_profile.id.as_str())
+        );
+        assert_eq!(completed.profile_name.as_deref(), Some("Queue VM fixture"));
+        assert_eq!(completed.config.duration, vm_profile_config.duration);
+        assert_eq!(gcc.profile_id.as_deref(), Some(gcc_profile.id.as_str()));
+        assert_eq!(gcc.profile_name.as_deref(), Some("Queue GCC fixture"));
+        assert!(profile_manager.get(&gcc_profile.id).is_err());
+        assert!(queued_output.is_file());
+        assert!(gcc_output.is_file());
+        let (Some(vm_started), Some(vm_finished), Some(gcc_started), Some(gcc_finished)) = (
+            completed.started_unix_time_ms,
+            completed.finished_unix_time_ms,
+            gcc.started_unix_time_ms,
+            gcc.finished_unix_time_ms,
+        ) else {
+            panic!("completed integration jobs must retain their execution intervals");
+        };
+        assert!(
+            vm_started < gcc_finished && gcc_started < vm_finished,
+            "two-worker renderer jobs did not overlap: VM {vm_started}..{vm_finished}, GCC {gcc_started}..{gcc_finished}"
+        );
+        let vm_outcome = completed.outcome.as_ref().unwrap();
+        let gcc_outcome = gcc.outcome.as_ref().unwrap();
+        let performance_store = crate::performance::PerformanceStore::open_default().unwrap();
+        let vm_performance = performance_store
+            .get(vm_outcome.performance_record_id.as_deref().unwrap())
+            .unwrap();
+        let gcc_performance = performance_store
+            .get(gcc_outcome.performance_record_id.as_deref().unwrap())
+            .unwrap();
+        assert_eq!(
+            gcc_performance.gcc_codegen_version.as_deref(),
+            Some(crate::sono_gcc::compiler_identity().0)
+        );
+        assert_eq!(
+            gcc_performance.gcc_runtime_abi.as_deref(),
+            Some(crate::sono_gcc::compiler_identity().1)
+        );
+        let history_store = manager.history_store().unwrap();
+        let failed_history = history_store
+            .get(&crate::render_history::history_id(&failed_id, 1))
+            .unwrap();
+        let vm_history = history_store
+            .get(&crate::render_history::history_id(&completed_id, 1))
+            .unwrap();
+        let gcc_history = history_store
+            .get(&crate::render_history::history_id(&gcc_id, 1))
+            .unwrap();
+        assert_eq!(
+            failed_history.status,
+            crate::render_history::HistoryStatus::Failed
+        );
+        assert!(failed_history.error.is_some());
+        assert!(failed_history.diagnostic_record_id.is_some());
+        assert_eq!(
+            vm_history.status,
+            crate::render_history::HistoryStatus::Completed
+        );
+        assert_eq!(
+            vm_history.profile_id.as_deref(),
+            Some(vm_profile.id.as_str())
+        );
+        assert_eq!(
+            vm_history.config_snapshot.duration,
+            vm_profile_config.duration
+        );
+        assert_eq!(
+            vm_history.performance_record_id.as_deref(),
+            Some(vm_performance.id.as_str())
+        );
+        assert!(vm_history.diagnostic_record_id.is_some());
+        assert_eq!(
+            gcc_history.status,
+            crate::render_history::HistoryStatus::Completed
+        );
+        assert_eq!(
+            gcc_history.profile_id.as_deref(),
+            Some(gcc_profile.id.as_str())
+        );
+        assert_eq!(
+            gcc_history.performance_record_id.as_deref(),
+            Some(gcc_performance.id.as_str())
+        );
+        assert_eq!(gcc_history.cache_state, gcc_performance.gcc_cache_state);
+        assert!(vm_performance.queue_wait_time_ms.is_some());
+        assert!(gcc_performance.queue_wait_time_ms.is_some());
+        assert!(vm_performance.total_user_latency_ms.unwrap() >= vm_performance.execution_time_ms);
+        assert!(
+            gcc_performance.total_user_latency_ms.unwrap() >= gcc_performance.execution_time_ms
+        );
+        assert!(gcc_performance.gcc_cache_state.is_some());
+        let backend_comparison =
+            crate::performance::compare_records(&vm_performance, &gcc_performance);
+        if gcc_performance.gcc_cache_state.as_deref() == Some("fallback") {
+            assert!(!backend_comparison.comparable);
+            assert!(backend_comparison
+                .differences
+                .iter()
+                .any(|difference| difference == "effective Watch execution backend"));
+        } else {
+            assert!(backend_comparison.comparable);
+        }
+        assert_eq!(vm_outcome.rgb_sequence_sha1, gcc_outcome.rgb_sequence_sha1);
+        assert_eq!(vm_outcome.sfx_event_sha1, gcc_outcome.sfx_event_sha1);
+        assert!(fs::read_dir(fixture.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("partial.mp4")));
+
+        // A manifest exported from the real VM history record must preserve
+        // resolved inputs after the source profile changes, then submit a new
+        // ordinary queue job and link its own history result to the manifest.
+        let manifest_path = fixture.path().join("vm-render.sonomanifest.json");
+        let manifest_generation_started = Instant::now();
+        let manifest = crate::render_manifest::RenderManifest::from_history_with_performance(
+            &vm_history,
+            Some(&vm_performance),
+        )
+        .unwrap();
+        let manifest_generation_elapsed = manifest_generation_started.elapsed();
+        let manifest_input_bytes = manifest
+            .inputs
+            .iter()
+            .filter(|input| input.active)
+            .filter_map(|input| input.size_bytes)
+            .sum::<u64>();
+        manifest.save_atomic(&manifest_path).unwrap();
+        let manifest = crate::render_manifest::RenderManifest::load(&manifest_path).unwrap();
+        let manifest_verification_started = Instant::now();
+        let verification = manifest.verify(&Default::default()).unwrap();
+        let manifest_verification_elapsed = manifest_verification_started.elapsed();
+        eprintln!(
+            "RENDER_MANIFEST_IO active_inputs={} input_mib={:.2} generate_ms={:.3} verify_ms={:.3}",
+            manifest.inputs.iter().filter(|input| input.active).count(),
+            manifest_input_bytes as f64 / (1024.0 * 1024.0),
+            manifest_generation_elapsed.as_secs_f64() * 1000.0,
+            manifest_verification_elapsed.as_secs_f64() * 1000.0,
+        );
+        assert!(verification.can_reproduce_exact_backend);
+        assert!(verification
+            .items
+            .iter()
+            .filter(|item| item.category
+                == crate::render_manifest::DifferenceCategory::InputContent
+                && item.affects_semantics)
+            .all(|item| item.status == crate::render_manifest::VerificationStatus::Match));
+        let reproduced_output = fixture.path().join("manifest-reproduction.mp4");
+        let reproduced_config = manifest
+            .build_reproduction_config(&Default::default(), &reproduced_output)
+            .unwrap();
+        assert_eq!(reproduced_config.duration, vm_profile_config.duration);
+        let reproduction_job_id = manager
+            .enqueue_with_metadata(
+                reproduced_config,
+                None,
+                manifest
+                    .provenance
+                    .profile_id
+                    .clone()
+                    .zip(manifest.provenance.profile_name.clone()),
+                crate::job_manager::RenderJobMetadata {
+                    original_job_id: manifest.provenance.job_id.clone(),
+                    rerendered_from_history_id: manifest.provenance.history_id.clone(),
+                    reproduced_from_manifest_sha256: Some(manifest.manifest_sha256.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        manager.wait_until_idle().unwrap();
+        let reproduced = manager.inspect(&reproduction_job_id).unwrap();
+        assert_eq!(reproduced.state, crate::job_manager::JobState::Completed);
+        assert!(reproduced_output.is_file());
+        assert_eq!(
+            reproduced.reproduced_from_manifest_sha256.as_deref(),
+            Some(manifest.manifest_sha256.as_str())
+        );
+        let reproduced_history = history_store
+            .get(&crate::render_history::history_id(&reproduction_job_id, 1))
+            .unwrap();
+        assert_eq!(
+            reproduced_history
+                .reproduced_from_manifest_sha256
+                .as_deref(),
+            Some(manifest.manifest_sha256.as_str())
+        );
+        assert_eq!(
+            reproduced_history.rgb_sequence_sha1,
+            vm_history.rgb_sequence_sha1
+        );
+        assert_eq!(reproduced_history.sfx_event_sha1, vm_history.sfx_event_sha1);
+
+        // Restore the missing input and retry the exact saved configuration.
+        // This exercises a real failed attempt followed by a successful retry.
+        fs::copy(&engine, &broken_engine).unwrap();
+        manager.retry(&failed_id).unwrap();
+        manager.wait_until_idle().unwrap();
+        let retried = manager.inspect(&failed_id).unwrap();
+        assert_eq!(retried.state, crate::job_manager::JobState::Completed);
+        assert_eq!(retried.attempt, 2);
+        assert_eq!(retried.previous_attempt_diagnostics.len(), 1);
+        assert!(fixture.path().join("should-not-exist.mp4").is_file());
+        let retry_history = history_store
+            .get(&crate::render_history::history_id(&failed_id, 2))
+            .unwrap();
+        assert_eq!(
+            retry_history.status,
+            crate::render_history::HistoryStatus::Completed
+        );
+        assert_eq!(
+            retry_history.retried_from_history_id.as_deref(),
+            Some(crate::render_history::history_id(&failed_id, 1).as_str())
+        );
+
+        // Exercise the actual benchmark runner and its opt-in detailed-profile
+        // overhead estimate on this short real-render fixture. The assertion
+        // checks record shape only; wall-time thresholds would be machine-noise
+        // sensitive and do not belong in a correctness integration test.
+        let mut telemetry_config = make_job_config(
+            engine.clone(),
+            fixture.path().join("telemetry-benchmark.mp4"),
+        );
+        telemetry_config.duration = 0.25;
+        telemetry_config.frame_pipeline = false;
+        let telemetry_benchmark =
+            crate::performance::run_benchmark(telemetry_config, 0, 1, false, true).unwrap();
+        let overhead = telemetry_benchmark.telemetry_overhead.as_ref().unwrap();
+        assert_eq!(overhead.detailed_samples.len(), 1);
+        assert_eq!(telemetry_benchmark.backends[0].samples.len(), 1);
+        eprintln!(
+            "PERF_LAB_OVERHEAD lightweight={:.3}ms detailed={:.3}ms delta={:+.3}ms ({})",
+            overhead.lightweight_median_ms,
+            overhead.detailed_median_ms,
+            overhead.overhead_ms,
+            overhead.classification
+        );
+
+        // Cancel a live long render through the job manager. The final path
+        // must remain absent and the partial staging file must be cleaned up.
+        let cancelled_output = fixture.path().join("job-manager-cancelled.mp4");
+        let mut cancellable_config = make_job_config(engine.clone(), cancelled_output.clone());
+        cancellable_config.duration = 30.0;
+        let cancelled_id = manager.enqueue(cancellable_config, None).unwrap();
+        let activation_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let state = manager.inspect(&cancelled_id).unwrap().state;
+            if state.is_active() {
+                break;
+            }
+            assert_eq!(state, crate::job_manager::JobState::Queued);
+            assert!(
+                std::time::Instant::now() < activation_deadline,
+                "cancel fixture never became active"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        manager.cancel(&cancelled_id).unwrap();
+        manager.wait_until_idle().unwrap();
+        let cancelled = manager.inspect(&cancelled_id).unwrap();
+        assert_eq!(cancelled.state, crate::job_manager::JobState::Cancelled);
+        assert!(!cancelled_output.exists());
+        assert!(!fixture
+            .path()
+            .join(format!(
+                ".job-manager-cancelled.{}.partial.mp4",
+                cancelled.id
+            ))
+            .exists());
+        drop(manager);
+
         // Keep the short, non-divisor frame-rate case covered end to end. The
         // default MP4 track timescale rounded this 27-frame 239 FPS clip to
         // 240 FPS and correctly failed the strict FFprobe validation.
@@ -2264,6 +2867,10 @@ mod tests {
                 fps: 239,
                 width: 16,
                 height: 24,
+                // Exercise non-default shared encoder settings through the
+                // actual FFmpeg invocation on this small output.
+                video_crf: 22,
+                video_preset: crate::render::VideoPreset::Fast,
                 trace_entity_id: None,
                 level_option_overrides: &[],
                 skin_name: None,
@@ -2273,6 +2880,8 @@ mod tests {
                 ui: &ui,
                 backend: crate::render::RenderBackend::Cpu,
                 execution_mode: crate::sono_gcc::WatchExecutionMode::Interpreter,
+                watch_compatibility_policy: crate::runtime::WatchCompatibilityPolicy::Permissive,
+                watch_random_seed: crate::runtime::DEFAULT_WATCH_RANDOM_SEED,
                 parallel_watch_updates: true,
                 watch_workers: None,
                 compile_sono_gcc_on_demand: true,
@@ -2314,6 +2923,8 @@ mod tests {
                     fps: 12,
                     width: 64,
                     height: 36,
+                    video_crf: 18,
+                    video_preset: crate::render::VideoPreset::Medium,
                     trace_entity_id: None,
                     level_option_overrides: &[],
                     skin_name: None,
@@ -2323,6 +2934,9 @@ mod tests {
                     ui: &ui,
                     backend: crate::render::RenderBackend::Cpu,
                     execution_mode: crate::sono_gcc::WatchExecutionMode::Interpreter,
+                    watch_compatibility_policy:
+                        crate::runtime::WatchCompatibilityPolicy::Permissive,
+                    watch_random_seed: crate::runtime::DEFAULT_WATCH_RANDOM_SEED,
                     parallel_watch_updates: true,
                     watch_workers: None,
                     compile_sono_gcc_on_demand: true,
@@ -2370,6 +2984,8 @@ mod tests {
                 fps: 12,
                 width: 64,
                 height: 36,
+                video_crf: 18,
+                video_preset: crate::render::VideoPreset::Medium,
                 trace_entity_id: None,
                 level_option_overrides: &[],
                 skin_name: None,
@@ -2379,6 +2995,8 @@ mod tests {
                 ui: &ui,
                 backend: crate::render::RenderBackend::Cpu,
                 execution_mode: crate::sono_gcc::WatchExecutionMode::Interpreter,
+                watch_compatibility_policy: crate::runtime::WatchCompatibilityPolicy::Permissive,
+                watch_random_seed: crate::runtime::DEFAULT_WATCH_RANDOM_SEED,
                 parallel_watch_updates: true,
                 watch_workers: None,
                 compile_sono_gcc_on_demand: true,
@@ -2880,6 +3498,7 @@ mod tests {
             .contains("worker panicked"));
 
         let mut failing_ui = crate::render_ui::RendererUiConfig::default();
+        failing_ui.mode = crate::render_ui::GameplayUiMode::Legacy;
         failing_ui.enabled = true;
         failing_ui.primary_metric.provider = crate::render_ui::UiValueProvider::EngineMetric {
             key: "missing".to_owned(),

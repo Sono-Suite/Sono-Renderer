@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "locales": [
+    {"id":"en","native_name":"English","english_name":"English","fallback":"en","direction":"ltr","audience":"release","catalog_status":"canonical-source","review_status":"source-copy"},
+    {"id":"ja","native_name":"日本語","english_name":"Japanese","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"zh-CN","native_name":"简体中文","english_name":"Simplified Chinese","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"zh-TW","native_name":"繁體中文","english_name":"Traditional Chinese","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"ko","native_name":"한국어","english_name":"Korean","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"es","native_name":"Español","english_name":"Spanish","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"pt-BR","native_name":"Português (Brasil)","english_name":"Brazilian Portuguese","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"fr","native_name":"Français","english_name":"French","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"de","native_name":"Deutsch","english_name":"German","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"ru","native_name":"Русский","english_name":"Russian","fallback":"en","direction":"ltr","audience":"release","catalog_status":"core-workflow","review_status":"machine-drafted-unreviewed"},
+    {"id":"qps-ploc","native_name":"Pseudo-localization","english_name":"Pseudo-localization","fallback":"en","direction":"ltr","audience":"developer","catalog_status":"generated-test-locale","review_status":"not-a-language"},
+    {"id":"qps-rtl","native_name":"RTL stress","english_name":"RTL stress localization","fallback":"en","direction":"rtl","audience":"developer","catalog_status":"generated-test-locale","review_status":"not-a-language"}
+  ]
+}

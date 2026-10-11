@@ -26,7 +26,7 @@ pub enum WatchExecutionMode {
 const MAX_REGION_EVALUATIONS: usize = 16_384;
 const MAX_REGION_DEPTH: usize = 256;
 const MAX_NATIVE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
-const COMPILER_BACKEND_VERSION: &str = "sono-gcc-codegen-v4";
+const COMPILER_BACKEND_VERSION: &str = "sono-gcc-codegen-v6";
 const COMPILED_RUNTIME_ABI_VERSION: &str = "watchvm-scalar-cut-abi-v2";
 const COMPILER_FLAGS_ID: &str = "rust-2021;cdylib;opt-level=3;strict-fp-defaults";
 
@@ -36,8 +36,30 @@ pub fn compiler_identity() -> (&'static str, &'static str) {
 
 type NativeRun = unsafe extern "C" fn(*const f64, usize) -> f64;
 
-pub(crate) const NATIVE_FUNCTION_COUNT: usize = 75;
+pub(crate) const NATIVE_FUNCTION_COUNT: usize = 41;
 pub(crate) const INLINE_REGION_INPUTS: usize = 8;
+pub(crate) const REGION_SIZE_BUCKET_COUNT: usize = 8;
+/// Avoid the FFI/input-marshalling path for singleton scalar regions. Such a
+/// subtree remains available through WatchVm; the policy is based on the
+/// measured dynamic size profile and can be set to 1 to reproduce legacy
+/// all-region dispatch.
+pub(crate) const MIN_NATIVE_REGION_NODES: usize = 2;
+
+/// Bucket compiled-region sizes by the number of direct native operation
+/// nodes. Used only by the opt-in detailed Watch profiler.
+pub(crate) fn region_size_bucket(native_nodes: usize) -> usize {
+    match native_nodes {
+        0..=1 => 0,
+        2 => 1,
+        3..=4 => 2,
+        5..=8 => 3,
+        9..=16 => 4,
+        17..=32 => 5,
+        33..=64 => 6,
+        _ => 7,
+    }
+}
+
 const NATIVE_FUNCTION_NAMES: [&str; NATIVE_FUNCTION_COUNT] = [
     "Abs",
     "Add",
@@ -51,45 +73,11 @@ const NATIVE_FUNCTION_NAMES: [&str; NATIVE_FUNCTION_COUNT] = [
     "Cosh",
     "Degree",
     "Divide",
-    "EaseInBack",
-    "EaseInCirc",
-    "EaseInCubic",
-    "EaseInExpo",
-    "EaseInOutBack",
-    "EaseInOutCirc",
-    "EaseInOutCubic",
-    "EaseInOutExpo",
-    "EaseInOutQuad",
-    "EaseInOutQuart",
-    "EaseInOutQuint",
-    "EaseInOutSine",
-    "EaseInQuad",
-    "EaseInQuart",
-    "EaseInQuint",
-    "EaseInSine",
-    "EaseOutBack",
-    "EaseOutCirc",
-    "EaseOutCubic",
-    "EaseOutExpo",
-    "EaseOutInBack",
-    "EaseOutInCirc",
-    "EaseOutInCubic",
-    "EaseOutInExpo",
-    "EaseOutInQuad",
-    "EaseOutInQuart",
-    "EaseOutInQuint",
-    "EaseOutInSine",
-    "EaseOutQuad",
-    "EaseOutQuart",
-    "EaseOutQuint",
-    "EaseOutSine",
     "Equal",
     "Floor",
     "Frac",
     "Greater",
     "GreaterOr",
-    "Lerp",
-    "LerpClamped",
     "Less",
     "LessOr",
     "Log",
@@ -156,6 +144,10 @@ impl CompiledRegion {
     pub(crate) fn run(&self, inputs: &[f64]) -> f64 {
         unsafe { (self.run)(inputs.as_ptr(), inputs.len()) }
     }
+
+    pub(crate) fn size_bucket(&self) -> usize {
+        region_size_bucket(self.compiled_nodes.len())
+    }
 }
 
 pub(crate) struct SonoGccProgram {
@@ -165,6 +157,8 @@ pub(crate) struct SonoGccProgram {
     native_load_time: Duration,
     #[cfg(windows)]
     _library: NativeLibrary,
+    #[cfg(windows)]
+    _cache_lease: Option<crate::cache_manager::EntryLock>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -253,6 +247,26 @@ pub fn inspect_coverage(nodes: &[EngineNode]) -> SonoGccCoverage {
     }
 }
 
+/// Per-node static Sono-GCC coverage using the same eligibility classifier
+/// consumed by graph compilation. A false result means the node itself is not
+/// a native scalar operation; VM-cut children may still feed an eligible
+/// parent region.
+pub fn inspect_operation_coverage(nodes: &[EngineNode]) -> Vec<bool> {
+    let mut states = vec![0; nodes.len()];
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            !is_numeric(node)
+                && node
+                    .func
+                    .as_deref()
+                    .is_some_and(|name| !is_vm_cut_function(name))
+                && eligible(nodes, index, &mut states, 0)
+        })
+        .collect()
+}
+
 impl SonoGccProgram {
     pub(crate) fn region(&self, node: usize) -> Option<std::sync::Arc<CompiledRegion>> {
         let index = *self.region_by_node.get(node)?;
@@ -313,6 +327,7 @@ impl SonoGccProgram {
         Ok((result.program, elapsed, result.cache_hit != CacheHit::None))
     }
 
+    #[cfg(test)]
     pub(crate) fn compile_cached_detailed(nodes: &[EngineNode]) -> Result<SonoGccCompileResult> {
         Self::compile_cached_detailed_with_progress(nodes, || {})
     }
@@ -354,7 +369,7 @@ impl SonoGccProgram {
         }
     }
 
-    fn compile_cached_detailed_with_progress<F>(
+    pub(crate) fn compile_cached_detailed_with_progress<F>(
         nodes: &[EngineNode],
         on_compile_start: F,
     ) -> Result<SonoGccCompileResult>
@@ -504,6 +519,8 @@ const VM_CUT_FUNCTIONS: &[&str] = &[
     "IncrementPrePointed",
     "IncrementPreShifted",
     "JumpLoop",
+    "Lerp",
+    "LerpClamped",
     "Mod",
     "MoveParticleEffect",
     "Or",
@@ -555,7 +572,10 @@ const VM_CUT_FUNCTIONS: &[&str] = &[
 ];
 
 fn is_vm_cut_function(name: &str) -> bool {
-    VM_CUT_FUNCTIONS.contains(&name) || (ease_parts(name).is_some() && name.ends_with("Elastic"))
+    // Preserve WatchVm's exact floating-point result bits for interpolation
+    // and easing. Native Lerp differed on NaN payloads; keep the full family
+    // on the oracle path rather than trusting only ordinary numeric inputs.
+    VM_CUT_FUNCTIONS.contains(&name) || ease_parts(name).is_some()
 }
 
 fn ease_parts(name: &str) -> Option<(&'static str, &'static str)> {
@@ -594,7 +614,7 @@ fn eligible_operation_count(nodes: &[EngineNode]) -> u64 {
                     .func
                     .as_deref()
                     .is_some_and(|name| !is_vm_cut_function(name))
-                && eligible(nodes, *index, &mut states)
+                && eligible(nodes, *index, &mut states, 0)
         })
         .count() as u64
 }
@@ -665,7 +685,10 @@ fn is_vm_cut(nodes: &[EngineNode], index: usize, node: &EngineNode) -> bool {
     vm_cut_metrics(nodes, index, node).is_some()
 }
 
-fn eligible(nodes: &[EngineNode], index: usize, states: &mut [u8]) -> bool {
+fn eligible(nodes: &[EngineNode], index: usize, states: &mut [u8], depth: usize) -> bool {
+    if depth >= MAX_REGION_DEPTH {
+        return false;
+    }
     let Some(node) = nodes.get(index) else {
         return false;
     };
@@ -688,7 +711,10 @@ fn eligible(nodes: &[EngineNode], index: usize, states: &mut [u8]) -> bool {
         .and_then(|name| {
             let children = child_indices(node, index).ok()?;
             let used = used_children(name, &children).ok()?;
-            Some(used.into_iter().all(|child| eligible(nodes, child, states)))
+            Some(
+                used.into_iter()
+                    .all(|child| eligible(nodes, child, states, depth + 1)),
+            )
         })
         .unwrap_or(false);
     states[index] = if result { 2 } else { 3 };
@@ -935,7 +961,7 @@ fn ease_expression(name: &str, value: &str) -> Option<String> {
 fn compile_units(nodes: &[EngineNode]) -> Result<Vec<CompileUnit>> {
     let mut states = vec![0; nodes.len()];
     let candidates = (0..nodes.len())
-        .map(|index| eligible(nodes, index, &mut states))
+        .map(|index| eligible(nodes, index, &mut states, 0))
         .collect::<Vec<_>>();
     let mut covered = vec![false; nodes.len()];
     for (index, node) in nodes.iter().enumerate() {
@@ -968,6 +994,13 @@ fn compile_units(nodes: &[EngineNode]) -> Result<Vec<CompileUnit>> {
         .filter_map(|root| compile_unit(nodes, root))
         .collect();
     Ok(units)
+}
+
+fn dispatchable_units(units: Vec<CompileUnit>) -> Vec<CompileUnit> {
+    units
+        .into_iter()
+        .filter(|unit| unit.compiled_nodes.len() >= MIN_NATIVE_REGION_NODES)
+        .collect()
 }
 
 fn compile_unit(nodes: &[EngineNode], root: usize) -> Option<CompileUnit> {
@@ -1087,7 +1120,7 @@ fn compile_windows(
 
 #[cfg(windows)]
 fn compile_source(nodes: &[EngineNode]) -> Result<(Vec<CompileUnit>, String)> {
-    let units = compile_units(nodes)?;
+    let units = dispatchable_units(compile_units(nodes)?);
     if units.is_empty() {
         bail!("no compilable Watch regions were found");
     }
@@ -1188,14 +1221,19 @@ fn load_windows_library(
             library_path: library_path.to_path_buf(),
             remove_directory,
         },
+        _cache_lease: None,
     };
     Ok((program, load_time))
 }
 
 #[cfg(windows)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct CacheManifest {
+    format: String,
     schema: u32,
+    cache_key: String,
+    renderer_version: String,
+    created_unix_ms: u128,
     compiler_backend: String,
     runtime_abi: String,
     rustc_identity: String,
@@ -1205,6 +1243,7 @@ struct CacheManifest {
     graph_len: usize,
     library_name: String,
     library_sha1: String,
+    library_len: u64,
     metadata_name: String,
     metadata_sha1: String,
     metadata_len: usize,
@@ -1248,19 +1287,549 @@ struct CacheIdentity {
 }
 
 #[cfg(windows)]
+const CACHE_ENTRY_FORMAT: &str = "sono-renderer-cache-entry";
+#[cfg(windows)]
+const CACHE_MANIFEST_SCHEMA: u32 = 4;
+#[cfg(windows)]
+const MAX_CACHE_MANIFEST_BYTES: u64 = 1024 * 1024;
+#[cfg(windows)]
+const MAX_CACHE_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
+
 fn cache_root() -> std::path::PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("Sono-Renderer").join("cache").join("sono-gcc-v2")
+    #[cfg(all(windows, test))]
+    {
+        test_cache_base()
+            .join("appdata")
+            .join("Sono-Renderer")
+            .join("cache")
+            .join("sono-gcc-v2")
+    }
+    #[cfg(not(all(windows, test)))]
+    {
+        crate::store_paths::cache_root().join("sono-gcc-v2")
+    }
+}
+
+fn fallback_cache_root() -> std::path::PathBuf {
+    #[cfg(all(windows, test))]
+    {
+        test_cache_base()
+            .join("temp")
+            .join("Sono-Renderer")
+            .join("cache")
+            .join("sono-gcc-v2")
+    }
+    #[cfg(not(all(windows, test)))]
+    {
+        std::env::temp_dir()
+            .join("Sono-Renderer")
+            .join("cache")
+            .join("sono-gcc-v2")
+    }
+}
+
+#[cfg(all(windows, test))]
+static TEST_CACHE_ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+
+#[cfg(all(windows, test))]
+fn test_cache_base() -> std::path::PathBuf {
+    TEST_CACHE_ROOT
+        .get_or_init(|| tempfile::tempdir().expect("creating isolated Sono-GCC test cache"))
+        .path()
+        .to_path_buf()
+}
+
+pub(crate) fn persistent_cache_roots() -> Vec<(String, std::path::PathBuf)> {
+    #[cfg(windows)]
+    {
+        let mut roots = vec![("appdata".to_owned(), cache_root())];
+        let fallback = fallback_cache_root();
+        if roots.iter().all(|(_, root)| root != &fallback) {
+            roots.push(("temp".to_owned(), fallback));
+        }
+        roots
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
 }
 
 #[cfg(windows)]
-fn fallback_cache_root() -> std::path::PathBuf {
-    std::env::temp_dir()
-        .join("Sono-Renderer")
-        .join("cache")
-        .join("sono-gcc-v2")
+pub(crate) fn load_cached_watch_graph(store: &str, key: &str) -> Result<Vec<EngineNode>> {
+    use anyhow::Context;
+    crate::cache_manager::validate_key(key)?;
+    let root = persistent_cache_roots()
+        .into_iter()
+        .find_map(|(candidate, root)| (candidate == store).then_some(root))
+        .context("persistent cache store is unavailable")?;
+    let directory = root.join(key);
+    let Some(lease) = crate::cache_manager::entry_lock_if_present(
+        &root,
+        key,
+        crate::cache_manager::EntryLockMode::Shared,
+    )?
+    else {
+        bail!("cache entry {key} was not found");
+    };
+    let result = (|| {
+        match std::fs::symlink_metadata(&directory) {
+            Ok(meta) if meta.file_type().is_dir() && !meta.file_type().is_symlink() => {}
+            _ => bail!("cache entry directory is missing or unsafe"),
+        }
+        let manifest_path = directory.join("manifest.json");
+        let manifest_info =
+            std::fs::symlink_metadata(&manifest_path).context("cache manifest is missing")?;
+        if !manifest_info.file_type().is_file()
+            || manifest_info.file_type().is_symlink()
+            || manifest_info.len() > MAX_CACHE_MANIFEST_BYTES
+        {
+            bail!("cache manifest is unsafe or too large");
+        }
+        let manifest: CacheManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)
+            .context("parsing cache manifest")?;
+        if manifest.schema != CACHE_MANIFEST_SCHEMA || manifest.cache_key != key {
+            bail!("cache graph cannot be rebuilt from an incompatible manifest");
+        }
+        let graph_path = directory.join("graph.json");
+        let graph_info =
+            std::fs::symlink_metadata(&graph_path).context("cached graph payload is missing")?;
+        if !graph_info.file_type().is_file()
+            || graph_info.file_type().is_symlink()
+            || graph_info.len() > MAX_CACHE_PAYLOAD_BYTES
+            || graph_info.len() != manifest.graph_len as u64
+        {
+            bail!("cached graph payload is unsafe or has an invalid length");
+        }
+        let bytes = std::fs::read(&graph_path).context("reading cached Watch graph")?;
+        if sha1_hex(&bytes) != manifest.graph_sha1
+            || graph_key_from_manifest(&manifest, &bytes) != key
+        {
+            bail!("cached graph identity or checksum is invalid");
+        }
+        serde_json::from_slice(&bytes).context("decoding cached Watch graph")
+    })();
+    lease.unlock()?;
+    result
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_cached_watch_graph(_store: &str, _key: &str) -> Result<Vec<EngineNode>> {
+    bail!("persistent Sono-GCC cache is available only on Windows")
+}
+
+/// Remove Sono-GCC's persistent compiled-code cache. The cache is fully
+/// reproducible and will be rebuilt on the next precompile/render.
+#[cfg(windows)]
+pub fn clear_persistent_cache() -> anyhow::Result<bool> {
+    let report = crate::cache_manager::clear(false)?;
+    if report.skipped_active != 0 {
+        bail!(
+            "left {} active Sono-GCC cache entr{} untouched",
+            report.skipped_active,
+            if report.skipped_active == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        );
+    }
+    Ok(report.removed_entries != 0)
+}
+
+#[cfg(not(windows))]
+pub fn clear_persistent_cache() -> anyhow::Result<bool> {
+    anyhow::bail!("Sono-GCC persistent cache is available only on Windows")
+}
+
+#[cfg(windows)]
+pub(crate) fn inspect_persistent_cache() -> Result<Vec<crate::cache_manager::CacheEntry>> {
+    let mut entries = Vec::new();
+    for (store, root) in persistent_cache_roots() {
+        match std::fs::symlink_metadata(&root) {
+            Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
+            }
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading cache root {}", root.display()))
+            }
+        }
+        for item in std::fs::read_dir(&root)
+            .with_context(|| format!("scanning cache root {}", root.display()))?
+        {
+            let item = item?;
+            let kind = item.file_type()?;
+            let key = item.file_name().to_string_lossy().into_owned();
+            if !kind.is_dir()
+                || kind.is_symlink()
+                || key.len() != 40
+                || !key.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                continue;
+            }
+            if let Some(entry) = inspect_cache_entry(&store, &root, &key, false)? {
+                entries.push(entry);
+            }
+        }
+    }
+    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(entries)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn inspect_persistent_cache() -> Result<Vec<crate::cache_manager::CacheEntry>> {
+    Ok(Vec::new())
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_persistent_cache() -> Result<Vec<crate::cache_manager::CacheEntry>> {
+    let mut entries = Vec::new();
+    for (store, root) in persistent_cache_roots() {
+        let Ok(root_info) = std::fs::symlink_metadata(&root) else {
+            continue;
+        };
+        if !root_info.file_type().is_dir() || root_info.file_type().is_symlink() {
+            continue;
+        }
+        for item in std::fs::read_dir(&root)? {
+            let item = item?;
+            let kind = item.file_type()?;
+            let key = item.file_name().to_string_lossy().into_owned();
+            if kind.is_dir()
+                && !kind.is_symlink()
+                && key.len() == 40
+                && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                if let Some(entry) = inspect_cache_entry(&store, &root, &key, true)? {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(entries)
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_persistent_cache_entry(
+    store: &str,
+    key: &str,
+) -> Result<Option<crate::cache_manager::CacheEntry>> {
+    let Some((_, root)) = persistent_cache_roots()
+        .into_iter()
+        .find(|(candidate, _)| candidate == store)
+    else {
+        return Ok(None);
+    };
+    inspect_cache_entry(store, &root, key, true)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn validate_persistent_cache() -> Result<Vec<crate::cache_manager::CacheEntry>> {
+    Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn validate_persistent_cache_entry(
+    _store: &str,
+    _key: &str,
+) -> Result<Option<crate::cache_manager::CacheEntry>> {
+    Ok(None)
+}
+
+#[cfg(windows)]
+fn inspect_cache_entry(
+    store: &str,
+    root: &std::path::Path,
+    key: &str,
+    validate: bool,
+) -> Result<Option<crate::cache_manager::CacheEntry>> {
+    use crate::cache_manager::{CacheEntry, CacheEntryStatus};
+
+    let directory = root.join(key);
+    let _lock = crate::cache_manager::try_entry_inspection_lock(root, key)?;
+    let dir_info = match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
+            metadata
+        }
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("reading cache entry {}", directory.display()))
+        }
+    };
+    let size_bytes = crate::cache_manager::directory_size(&directory)?;
+    let last_used_unix_ms = std::fs::metadata(directory.join("last-used"))
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_unix_ms);
+    let mut status = CacheEntryStatus::Corrupt;
+    let mut diagnostic = None;
+    let mut schema = None;
+    let mut target = None;
+    let mut created_unix_ms = dir_info.created().ok().and_then(system_time_unix_ms);
+
+    let validation = if validate {
+        inspect_cache_payload(&directory, key)
+    } else {
+        inspect_cache_manifest(&directory, key).and_then(|manifest| {
+            let compatible = cache_manifest_is_compatible(&manifest)?;
+            Ok((manifest, compatible))
+        })
+    };
+    match validation {
+        Ok((manifest, compatible)) => {
+            schema = Some(manifest.schema);
+            target = Some(manifest.target.clone());
+            created_unix_ms = Some(manifest.created_unix_ms);
+            if compatible {
+                status = if validate {
+                    CacheEntryStatus::Valid
+                } else {
+                    CacheEntryStatus::Unverified
+                };
+                if !validate {
+                    diagnostic =
+                        Some("integrity hashes have not been checked; run `cache validate`".into());
+                }
+            } else {
+                status = CacheEntryStatus::Incompatible;
+                diagnostic = Some("entry is valid but targets a different renderer/compiler/runtime/target identity".into());
+            }
+        }
+        Err(error) => {
+            diagnostic = Some(format!("{error:#}"));
+            if diagnostic
+                .as_deref()
+                .is_some_and(|message| message.contains("older or unknown schema"))
+            {
+                status = CacheEntryStatus::Incompatible;
+            }
+        }
+    }
+    Ok(Some(CacheEntry {
+        id: format!("{store}:{key}"),
+        category: "Sono-GCC compiled Watch graph",
+        associated_data: format!("Watch graph {}", &key[..12]),
+        size_bytes,
+        created_unix_ms,
+        last_used_unix_ms,
+        schema,
+        target,
+        status,
+        diagnostic,
+    }))
+}
+
+#[cfg(windows)]
+fn inspect_cache_payload(directory: &std::path::Path, key: &str) -> Result<(CacheManifest, bool)> {
+    use anyhow::Context;
+    let manifest = inspect_cache_manifest(directory, key)?;
+    let graph_path = directory.join("graph.json");
+    let graph_len = std::fs::symlink_metadata(&graph_path).context("graph payload is missing")?;
+    if graph_len.len() > MAX_CACHE_PAYLOAD_BYTES || graph_len.len() != manifest.graph_len as u64 {
+        bail!("graph payload length does not match manifest");
+    }
+    let graph_bytes = std::fs::read(&graph_path).context("reading graph payload")?;
+    if sha1_hex(&graph_bytes) != manifest.graph_sha1
+        || graph_key_from_manifest(&manifest, &graph_bytes) != key
+    {
+        bail!("graph payload checksum or cache identity does not match");
+    }
+    let library_path = directory.join(&manifest.library_name);
+    let library_info =
+        std::fs::symlink_metadata(&library_path).context("compiled library is missing")?;
+    if library_info.len() > MAX_CACHE_PAYLOAD_BYTES || library_info.len() != manifest.library_len {
+        bail!("compiled library length does not match manifest");
+    }
+    let library_bytes = std::fs::read(&library_path).context("reading compiled library")?;
+    if sha1_hex(&library_bytes) != manifest.library_sha1 {
+        bail!("compiled library checksum does not match manifest");
+    }
+    let metadata_path = directory.join(&manifest.metadata_name);
+    let metadata_info =
+        std::fs::symlink_metadata(&metadata_path).context("region metadata is missing")?;
+    if metadata_info.len() > MAX_CACHE_PAYLOAD_BYTES
+        || metadata_info.len() != manifest.metadata_len as u64
+    {
+        bail!("region metadata length does not match manifest");
+    }
+    let metadata_bytes = std::fs::read(&metadata_path).context("reading region metadata")?;
+    if sha1_hex(&metadata_bytes) != manifest.metadata_sha1 {
+        bail!("region metadata checksum does not match manifest");
+    }
+    let cached_metadata: CachedProgramMetadata =
+        serde_json::from_slice(&metadata_bytes).context("parsing region metadata")?;
+    let nodes: Vec<EngineNode> =
+        serde_json::from_slice(&graph_bytes).context("parsing cached Watch graph")?;
+    validate_cached_metadata(&cached_metadata, nodes.len(), &manifest)?;
+    let compatible = cache_manifest_is_compatible(&manifest)?;
+    Ok((manifest, compatible))
+}
+
+#[cfg(windows)]
+fn inspect_cache_manifest(directory: &std::path::Path, key: &str) -> Result<CacheManifest> {
+    use anyhow::Context;
+    let manifest_path = directory.join("manifest.json");
+    let manifest_info = std::fs::symlink_metadata(&manifest_path).context("manifest is missing")?;
+    if !manifest_info.file_type().is_file()
+        || manifest_info.file_type().is_symlink()
+        || manifest_info.len() > MAX_CACHE_MANIFEST_BYTES
+    {
+        bail!("cache manifest is not a regular file within the size limit");
+    }
+    let bytes = std::fs::read(&manifest_path).context("reading cache manifest")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).context("parsing manifest JSON")?;
+    let schema = value
+        .get("schema")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if schema != u64::from(CACHE_MANIFEST_SCHEMA) {
+        bail!("cache manifest is from an older or unknown schema ({schema})");
+    }
+    let manifest: CacheManifest =
+        serde_json::from_value(value).context("decoding cache manifest")?;
+    if manifest.format != CACHE_ENTRY_FORMAT
+        || manifest.cache_key != key
+        || !is_single_file_name(&manifest.library_name)
+        || !manifest.library_name.ends_with(".dll")
+        || !is_single_file_name(&manifest.metadata_name)
+        || !manifest.metadata_name.ends_with(".json")
+        || manifest.graph_len as u64 > MAX_CACHE_PAYLOAD_BYTES
+        || manifest.library_len > MAX_CACHE_PAYLOAD_BYTES
+        || manifest.metadata_len as u64 > MAX_CACHE_PAYLOAD_BYTES
+    {
+        bail!("manifest identity, artifact path, or payload size is invalid");
+    }
+    let required = [
+        ("graph.json", manifest.graph_len as u64),
+        (&manifest.library_name, manifest.library_len),
+        (&manifest.metadata_name, manifest.metadata_len as u64),
+    ];
+    for (name, expected_len) in required {
+        let info = std::fs::symlink_metadata(directory.join(name))
+            .with_context(|| format!("required cache payload {name:?} is missing"))?;
+        if !info.file_type().is_file()
+            || info.file_type().is_symlink()
+            || info.len() != expected_len
+        {
+            bail!("cache payload {name:?} has an unsafe type or mismatched length");
+        }
+    }
+    Ok(manifest)
+}
+
+#[cfg(windows)]
+fn cache_manifest_is_compatible(manifest: &CacheManifest) -> Result<bool> {
+    let (rustc_identity, target) = current_rustc_identity()?;
+    Ok(manifest.compiler_backend == COMPILER_BACKEND_VERSION
+        && manifest.runtime_abi == COMPILED_RUNTIME_ABI_VERSION
+        && manifest.renderer_version == env!("CARGO_PKG_VERSION")
+        && manifest.rustc_identity == rustc_identity
+        && manifest.target == target
+        && manifest.flags == COMPILER_FLAGS_ID)
+}
+
+#[cfg(windows)]
+fn is_single_file_name(name: &str) -> bool {
+    let path = std::path::Path::new(name);
+    path.file_name().is_some_and(|file| file == name)
+        && !name.is_empty()
+        && !name.contains(['/', '\\', ':'])
+}
+
+#[cfg(windows)]
+fn graph_key_from_manifest(manifest: &CacheManifest, graph: &[u8]) -> String {
+    let header = format!(
+        "{}\0{}\0{}\0{}\0{}\0{}\0",
+        manifest.compiler_backend,
+        manifest.runtime_abi,
+        manifest.renderer_version,
+        manifest.flags,
+        manifest.target,
+        manifest.rustc_identity,
+    );
+    let mut digest = Sha1::new();
+    digest.update(header.as_bytes());
+    digest.update(graph);
+    hex::encode(digest.finalize())
+}
+
+#[cfg(windows)]
+fn validate_cached_metadata(
+    metadata: &CachedProgramMetadata,
+    node_count: usize,
+    manifest: &CacheManifest,
+) -> Result<()> {
+    if metadata.schema != 1
+        || metadata.graph_sha1 != manifest.graph_sha1
+        || metadata.regions.len() != manifest.region_count as usize
+        || metadata.regions.is_empty()
+        || metadata
+            .regions
+            .windows(2)
+            .any(|pair| pair[0].root >= pair[1].root)
+        || metadata.regions.iter().any(|region| {
+            region.root >= node_count
+                || region.cut_nodes.len() != region.cut_depths.len()
+                || region.cut_nodes.iter().any(|&index| index >= node_count)
+                || region
+                    .cut_depths
+                    .iter()
+                    .any(|&depth| depth >= MAX_REGION_DEPTH)
+                || region.metrics.evaluations == 0
+                || region.metrics.evaluations > MAX_REGION_EVALUATIONS
+                || region.metrics.compiled_evaluations > region.metrics.evaluations
+                || region.metrics.max_depth >= MAX_REGION_DEPTH
+                || region.compiled_nodes.is_empty()
+                || region
+                    .compiled_nodes
+                    .iter()
+                    .any(|&index| index >= node_count)
+                || region.function_counts.iter().any(|(index, count)| {
+                    usize::from(*index) >= NATIVE_FUNCTION_COUNT || *count == 0
+                })
+                || region
+                    .function_counts
+                    .iter()
+                    .map(|(_, count)| count)
+                    .sum::<u64>()
+                    != region.function_dispatch_count
+        })
+    {
+        bail!("cached region metadata failed structural validation");
+    }
+    match (metadata.compiled_operations, metadata.eligible_operations) {
+        (Some(compiled), Some(eligible))
+            if compiled <= eligible && eligible <= node_count as u64 => {}
+        (None, None) => {}
+        _ => bail!("cached operation summary is invalid"),
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn system_time_unix_ms(time: std::time::SystemTime) -> Option<u128> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
+}
+
+#[cfg(windows)]
+fn touch_cache_last_used(directory: &std::path::Path) {
+    let path = directory.join("last-used");
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+    {
+        let _ =
+            file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
+    }
 }
 
 #[cfg(windows)]
@@ -1270,25 +1839,9 @@ fn sha1_hex(bytes: &[u8]) -> String {
 
 #[cfg(windows)]
 fn cache_identity(nodes: &[EngineNode]) -> Result<CacheIdentity> {
-    use std::process::Command;
-
     let identity_started = Instant::now();
     let graph_bytes = serde_json::to_vec(nodes).context("serializing Watch graph identity")?;
-    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = crate::export_control::hide_child_window(&mut Command::new(rustc))
-        .arg("--version")
-        .arg("--verbose")
-        .output()
-        .context("reading rustc identity for Sono-GCC cache")?;
-    if !output.status.success() {
-        bail!("rustc could not report its version for Sono-GCC cache identity");
-    }
-    let rustc_identity = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let target = rustc_identity
-        .lines()
-        .find_map(|line| line.strip_prefix("host: "))
-        .unwrap_or("unknown-target")
-        .to_owned();
+    let (rustc_identity, target) = current_rustc_identity()?;
     let identity_header = format!(
         "{COMPILER_BACKEND_VERSION}\0{COMPILED_RUNTIME_ABI_VERSION}\0{}\0{COMPILER_FLAGS_ID}\0{target}\0{rustc_identity}\0",
         env!("CARGO_PKG_VERSION")
@@ -1310,11 +1863,70 @@ fn cache_identity(nodes: &[EngineNode]) -> Result<CacheIdentity> {
 }
 
 #[cfg(windows)]
+fn current_rustc_identity() -> Result<(String, String)> {
+    use std::{process::Command, sync::OnceLock};
+    static IDENTITY: OnceLock<std::result::Result<(String, String), String>> = OnceLock::new();
+    IDENTITY
+        .get_or_init(|| {
+            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+            let output = crate::export_control::hide_child_window(&mut Command::new(rustc))
+                .arg("--version")
+                .arg("--verbose")
+                .output()
+                .map_err(|error| format!("reading rustc identity for Sono-GCC cache: {error}"))?;
+            if !output.status.success() {
+                return Err(
+                    "rustc could not report its version for Sono-GCC cache identity".into(),
+                );
+            }
+            let identity = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            let target = identity
+                .lines()
+                .find_map(|line| line.strip_prefix("host: "))
+                .unwrap_or("unknown-target")
+                .to_owned();
+            Ok((identity, target))
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+#[cfg(windows)]
 fn process_cache() -> &'static std::sync::Mutex<HashMap<Vec<u8>, std::sync::Arc<SonoGccProgram>>> {
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<Vec<u8>, std::sync::Arc<SonoGccProgram>>>> =
         OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(windows)]
+type CompilationGateRegistry =
+    std::sync::Mutex<HashMap<Vec<u8>, std::sync::Weak<std::sync::Mutex<()>>>>;
+
+#[cfg(windows)]
+fn compilation_gate(key: &[u8]) -> Result<std::sync::Arc<std::sync::Mutex<()>>> {
+    use std::sync::{Mutex, OnceLock, Weak};
+    static GATES: OnceLock<CompilationGateRegistry> = OnceLock::new();
+
+    let mut gates = GATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Sono-GCC compilation gate map poisoned"))?;
+    gates.retain(|_, gate| gate.strong_count() != 0);
+    if let Some(gate) = gates.get(key).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    let gate = std::sync::Arc::new(Mutex::new(()));
+    gates.insert(key.to_vec(), std::sync::Arc::downgrade(&gate));
+    Ok(gate)
+}
+
+#[cfg(windows)]
+fn process_cached_program(key: &[u8]) -> Result<Option<std::sync::Arc<SonoGccProgram>>> {
+    process_cache()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Sono-GCC process cache lock poisoned"))
+        .map(|entries| entries.get(key).cloned())
 }
 
 #[cfg(windows)]
@@ -1331,55 +1943,87 @@ fn insert_process_cache(key: Vec<u8>, program: std::sync::Arc<SonoGccProgram>) -
     Ok(())
 }
 
-#[cfg(windows)]
-fn in_progress_cache() -> &'static std::sync::Mutex<HashSet<Vec<u8>>> {
-    use std::sync::{Mutex, OnceLock};
-    static COMPILING: OnceLock<Mutex<HashSet<Vec<u8>>>> = OnceLock::new();
-    COMPILING.get_or_init(|| Mutex::new(HashSet::new()))
+pub(crate) fn process_cache_info() -> (usize, Option<u64>) {
+    #[cfg(windows)]
+    {
+        let Ok(entries) = process_cache().lock() else {
+            return (0, None);
+        };
+        let bytes = entries.values().fold(0_u64, |total, program| {
+            total.saturating_add(
+                std::fs::metadata(&program._library.library_path)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0),
+            )
+        });
+        (entries.len(), Some(bytes))
+    }
+    #[cfg(not(windows))]
+    {
+        (0, Some(0))
+    }
 }
 
-#[cfg(windows)]
-struct InProgressGuard(Vec<u8>);
+pub(crate) fn clear_idle_process_cache() -> usize {
+    #[cfg(windows)]
+    {
+        let Ok(mut entries) = process_cache().lock() else {
+            return 0;
+        };
+        let before = entries.len();
+        entries.retain(|_, program| std::sync::Arc::strong_count(program) > 1);
+        before - entries.len()
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
 
-#[cfg(windows)]
-impl Drop for InProgressGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = in_progress_cache().lock() {
-            active.remove(&self.0);
+pub(crate) fn evict_process_cache_entry(key: &str) -> Result<bool> {
+    #[cfg(windows)]
+    {
+        let mut cache = process_cache()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Sono-GCC process cache lock poisoned"))?;
+        let Some(program) = cache.get(key.as_bytes()) else {
+            return Ok(false);
+        };
+        if program._cache_lease.is_some() && std::sync::Arc::strong_count(program) > 1 {
+            return Ok(true);
         }
+        cache.remove(key.as_bytes());
+        Ok(false)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = key;
+        Ok(false)
     }
 }
 
 #[cfg(windows)]
-struct DiskCacheLock(std::path::PathBuf);
-
-#[cfg(windows)]
-impl Drop for DiskCacheLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-#[cfg(windows)]
-fn try_disk_cache_lock(directory: &std::path::Path) -> Result<Option<DiskCacheLock>> {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-
-    std::fs::create_dir_all(directory).context("creating Sono-GCC cache directory")?;
-    let path = directory.join("compile.lock");
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            writeln!(file, "pid={}", std::process::id())?;
-            Ok(Some(DiskCacheLock(path)))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
-        Err(error) => Err(error).context("locking Sono-GCC persistent cache entry"),
-    }
+fn try_disk_cache_lock(
+    directory: &std::path::Path,
+    key: &str,
+) -> Result<crate::cache_manager::EntryLock> {
+    let root = directory
+        .parent()
+        .context("Sono-GCC cache entry has no category directory")?;
+    crate::cache_manager::acquire_entry_lock(
+        root,
+        key,
+        crate::cache_manager::EntryLockMode::Exclusive,
+    )
+    .context("locking Sono-GCC persistent cache entry")
 }
 
 #[cfg(windows)]
 fn cache_manifest_matches(manifest: &CacheManifest, identity: &CacheIdentity) -> bool {
-    manifest.schema == 3
+    manifest.format == CACHE_ENTRY_FORMAT
+        && manifest.schema == CACHE_MANIFEST_SCHEMA
+        && manifest.cache_key == identity.digest
+        && manifest.renderer_version == env!("CARGO_PKG_VERSION")
         && manifest.compiler_backend == COMPILER_BACKEND_VERSION
         && manifest.runtime_abi == COMPILED_RUNTIME_ABI_VERSION
         && manifest.rustc_identity == identity.rustc_identity
@@ -1387,12 +2031,11 @@ fn cache_manifest_matches(manifest: &CacheManifest, identity: &CacheIdentity) ->
         && manifest.flags == COMPILER_FLAGS_ID
         && manifest.graph_sha1 == identity.graph_sha1
         && manifest.graph_len == identity.graph_bytes.len()
-        && std::path::Path::new(&manifest.library_name)
-            .file_name()
-            .is_some()
-        && std::path::Path::new(&manifest.metadata_name)
-            .file_name()
-            .is_some()
+        && manifest.library_len > 0
+        && is_single_file_name(&manifest.library_name)
+        && manifest.library_name.ends_with(".dll")
+        && is_single_file_name(&manifest.metadata_name)
+        && manifest.metadata_name.ends_with(".json")
 }
 
 #[cfg(windows)]
@@ -1409,20 +2052,62 @@ fn load_disk_cache(
     identity: &CacheIdentity,
 ) -> Result<Option<DiskCacheLoad>> {
     let disk_validation_started = Instant::now();
+    let root = identity
+        .directory
+        .parent()
+        .context("Sono-GCC cache entry has no category directory")?;
+    let Some(cache_lease) = crate::cache_manager::entry_lock_if_present(
+        root,
+        &identity.digest,
+        crate::cache_manager::EntryLockMode::Shared,
+    )?
+    else {
+        return Ok(None);
+    };
+    let dir_info = match std::fs::symlink_metadata(&identity.directory) {
+        Ok(info) if info.file_type().is_dir() && !info.file_type().is_symlink() => info,
+        _ => return Ok(None),
+    };
+    let _ = dir_info;
     let manifest_path = identity.directory.join("manifest.json");
     let graph_path = identity.directory.join("graph.json");
+    let manifest_info = match std::fs::symlink_metadata(&manifest_path) {
+        Ok(info) if info.file_type().is_file() && !info.file_type().is_symlink() => info,
+        _ => return Ok(None),
+    };
+    if manifest_info.len() > MAX_CACHE_MANIFEST_BYTES {
+        return Ok(None);
+    }
     let Ok(manifest_bytes) = std::fs::read(&manifest_path) else {
         return Ok(None);
     };
+    if manifest_bytes.len() as u64 > MAX_CACHE_MANIFEST_BYTES {
+        return Ok(None);
+    }
     let Ok(manifest) = serde_json::from_slice::<CacheManifest>(&manifest_bytes) else {
         return Ok(None);
     };
-    if !cache_manifest_matches(&manifest, identity)
+    if !cache_manifest_matches(&manifest, identity) {
+        return Ok(None);
+    }
+    let graph_meta = match std::fs::symlink_metadata(&graph_path) {
+        Ok(meta) if meta.file_type().is_file() && !meta.file_type().is_symlink() => meta,
+        _ => return Ok(None),
+    };
+    if graph_meta.len() > MAX_CACHE_PAYLOAD_BYTES
+        || graph_meta.len() != identity.graph_bytes.len() as u64
         || std::fs::read(&graph_path).ok().as_deref() != Some(identity.graph_bytes.as_slice())
     {
         return Ok(None);
     }
     let library_path = identity.directory.join(&manifest.library_name);
+    let library_meta = match std::fs::symlink_metadata(&library_path) {
+        Ok(meta) if meta.file_type().is_file() && !meta.file_type().is_symlink() => meta,
+        _ => return Ok(None),
+    };
+    if library_meta.len() > MAX_CACHE_PAYLOAD_BYTES || library_meta.len() != manifest.library_len {
+        return Ok(None);
+    }
     let Ok(library_bytes) = std::fs::read(&library_path) else {
         return Ok(None);
     };
@@ -1430,6 +2115,15 @@ fn load_disk_cache(
         return Ok(None);
     }
     let metadata_path = identity.directory.join(&manifest.metadata_name);
+    let metadata_meta = match std::fs::symlink_metadata(&metadata_path) {
+        Ok(meta) if meta.file_type().is_file() && !meta.file_type().is_symlink() => meta,
+        _ => return Ok(None),
+    };
+    if metadata_meta.len() > MAX_CACHE_PAYLOAD_BYTES
+        || metadata_meta.len() != manifest.metadata_len as u64
+    {
+        return Ok(None);
+    }
     let Ok(metadata_bytes) = std::fs::read(&metadata_path) else {
         return Ok(None);
     };
@@ -1443,53 +2137,12 @@ fn load_disk_cache(
     let Ok(metadata) = serde_json::from_slice::<CachedProgramMetadata>(&metadata_bytes) else {
         return Ok(None);
     };
-    if metadata.schema != 1
-        || metadata.graph_sha1 != identity.graph_sha1
-        || metadata.regions.len() != manifest.region_count as usize
-        || metadata
-            .regions
-            .windows(2)
-            .any(|pair| pair[0].root >= pair[1].root)
-        || metadata.regions.iter().any(|region| {
-            region.root >= nodes.len()
-                || region.cut_nodes.len() != region.cut_depths.len()
-                || region.cut_nodes.iter().any(|&index| index >= nodes.len())
-                || region
-                    .cut_depths
-                    .iter()
-                    .any(|&depth| depth >= MAX_REGION_DEPTH)
-                || region.metrics.evaluations == 0
-                || region.metrics.evaluations > MAX_REGION_EVALUATIONS
-                || region.metrics.compiled_evaluations > region.metrics.evaluations
-                || region.metrics.max_depth >= MAX_REGION_DEPTH
-                || region.compiled_nodes.is_empty()
-                || region
-                    .compiled_nodes
-                    .iter()
-                    .any(|&index| index >= nodes.len())
-                || region.function_counts.iter().any(|(index, count)| {
-                    usize::from(*index) >= NATIVE_FUNCTION_COUNT || *count == 0
-                })
-                || region
-                    .function_counts
-                    .iter()
-                    .map(|(_, count)| count)
-                    .sum::<u64>()
-                    != region.function_dispatch_count
-        })
-    {
+    if validate_cached_metadata(&metadata, nodes.len(), &manifest).is_err() {
         return Ok(None);
     }
-    let cached_operation_counts = match (metadata.compiled_operations, metadata.eligible_operations)
-    {
-        (Some(compiled), Some(eligible))
-            if compiled <= eligible && eligible <= nodes.len() as u64 =>
-        {
-            Some((compiled, eligible))
-        }
-        (None, None) => None,
-        _ => return Ok(None),
-    };
+    let cached_operation_counts = metadata
+        .compiled_operations
+        .zip(metadata.eligible_operations);
     let units = metadata
         .regions
         .into_iter()
@@ -1515,7 +2168,9 @@ fn load_disk_cache(
         &identity.directory,
         false,
     ) {
-        Ok((program, native_load)) => {
+        Ok((mut program, native_load)) => {
+            program._cache_lease = Some(cache_lease);
+            touch_cache_last_used(&identity.directory);
             if let Some(counts) = cached_operation_counts {
                 let _ = program.operation_counts.set(counts);
             }
@@ -1539,37 +2194,44 @@ fn persist_disk_cache(
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+    if identity.graph_bytes.len() as u64 > MAX_CACHE_PAYLOAD_BYTES {
+        bail!("serialized Watch graph exceeds the persistent cache payload limit");
+    }
     let temp_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let source_library = &program._library.library_path;
+    let library_info =
+        std::fs::symlink_metadata(source_library).context("inspecting generated Sono-GCC DLL")?;
+    if !library_info.file_type().is_file()
+        || library_info.file_type().is_symlink()
+        || library_info.len() > MAX_CACHE_PAYLOAD_BYTES
+    {
+        bail!("generated Sono-GCC DLL exceeds the persistent cache payload limit or has an unsafe type");
+    }
     let library_bytes = std::fs::read(source_library).context("reading generated Sono-GCC DLL")?;
+    if library_bytes.len() as u64 != library_info.len() {
+        bail!("generated Sono-GCC DLL changed while preparing its cache entry");
+    }
     let library_sha1 = sha1_hex(&library_bytes);
     let library_name = format!("program-{library_sha1}.dll");
     std::fs::create_dir_all(&identity.directory).context("creating persistent GCC cache entry")?;
-
-    let library_path = identity.directory.join(&library_name);
-    if !library_path.is_file() {
-        let temp_library = identity
-            .directory
-            .join(format!(".program-{temp_id}.dll.tmp"));
-        std::fs::write(&temp_library, &library_bytes).context("writing cached Sono-GCC DLL")?;
-        if let Err(error) = std::fs::rename(&temp_library, &library_path) {
-            let _ = std::fs::remove_file(&temp_library);
-            if !library_path.is_file() {
-                return Err(error).context("committing cached Sono-GCC DLL");
-            }
-        }
+    match std::fs::symlink_metadata(&identity.directory) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => bail!(
+            "refusing to write through non-directory cache entry {}",
+            identity.directory.display()
+        ),
+        Err(error) => return Err(error).context("validating Sono-GCC cache entry directory"),
     }
-
-    let graph_path = identity.directory.join("graph.json");
-    if std::fs::read(&graph_path).ok().as_deref() != Some(identity.graph_bytes.as_slice()) {
-        let temp_graph = identity.directory.join(format!(".graph-{temp_id}.tmp"));
-        std::fs::write(&temp_graph, &identity.graph_bytes)
-            .context("writing cached graph identity")?;
-        if graph_path.exists() {
-            std::fs::remove_file(&graph_path).context("replacing cached graph identity")?;
-        }
-        std::fs::rename(&temp_graph, &graph_path).context("committing cached graph identity")?;
+    // Remove the commit marker first. Every payload is written to a same-volume
+    // temporary file and renamed into place; manifest.json is published last.
+    // A crash at any earlier point leaves a miss, never a valid half-entry.
+    let manifest_path = identity.directory.join("manifest.json");
+    match std::fs::remove_file(&manifest_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("invalidating prior GCC cache manifest"),
     }
+    cleanup_known_cache_payloads(&identity.directory)?;
 
     let region_entries = program.regions.iter().collect::<Vec<_>>();
     let cached_metadata = CachedProgramMetadata {
@@ -1604,23 +2266,31 @@ fn persist_disk_cache(
     };
     let metadata_bytes = serde_json::to_vec(&cached_metadata)
         .context("serializing Sono-GCC cached region metadata")?;
+    if metadata_bytes.len() as u64 > MAX_CACHE_PAYLOAD_BYTES {
+        bail!("Sono-GCC region metadata exceeds the persistent cache payload limit");
+    }
     let metadata_sha1 = sha1_hex(&metadata_bytes);
     let metadata_name = "regions.json".to_owned();
-    let metadata_path = identity.directory.join(&metadata_name);
-    if std::fs::read(&metadata_path).ok().as_deref() != Some(metadata_bytes.as_slice()) {
-        let temp_metadata = identity.directory.join(format!(".regions-{temp_id}.tmp"));
-        std::fs::write(&temp_metadata, &metadata_bytes)
-            .context("writing Sono-GCC cached region metadata")?;
-        if metadata_path.exists() {
-            std::fs::remove_file(&metadata_path)
-                .context("replacing Sono-GCC cached region metadata")?;
-        }
-        std::fs::rename(&temp_metadata, &metadata_path)
-            .context("committing Sono-GCC cached region metadata")?;
-    }
+    atomic_cache_file(&identity.directory, &library_name, &library_bytes, temp_id)?;
+    atomic_cache_file(
+        &identity.directory,
+        "graph.json",
+        &identity.graph_bytes,
+        temp_id,
+    )?;
+    atomic_cache_file(
+        &identity.directory,
+        &metadata_name,
+        &metadata_bytes,
+        temp_id,
+    )?;
 
     let manifest = CacheManifest {
-        schema: 3,
+        format: CACHE_ENTRY_FORMAT.to_owned(),
+        schema: CACHE_MANIFEST_SCHEMA,
+        cache_key: identity.digest.clone(),
+        renderer_version: env!("CARGO_PKG_VERSION").to_owned(),
+        created_unix_ms: crate::cache_manager::now_unix_ms(),
         compiler_backend: COMPILER_BACKEND_VERSION.to_owned(),
         runtime_abi: COMPILED_RUNTIME_ABI_VERSION.to_owned(),
         rustc_identity: identity.rustc_identity.clone(),
@@ -1630,6 +2300,7 @@ fn persist_disk_cache(
         graph_len: identity.graph_bytes.len(),
         library_name,
         library_sha1,
+        library_len: library_bytes.len() as u64,
         metadata_name,
         metadata_sha1,
         metadata_len: metadata_bytes.len(),
@@ -1637,13 +2308,75 @@ fn persist_disk_cache(
         original_compile_ms: compile_time.as_millis(),
     };
     let manifest_bytes = serde_json::to_vec(&manifest).context("serializing GCC cache manifest")?;
-    let temp_manifest = identity.directory.join(format!(".manifest-{temp_id}.tmp"));
-    std::fs::write(&temp_manifest, manifest_bytes).context("writing GCC cache manifest")?;
-    let manifest_path = identity.directory.join("manifest.json");
-    if manifest_path.exists() {
-        std::fs::remove_file(&manifest_path).context("replacing GCC cache manifest")?;
+    atomic_cache_file(
+        &identity.directory,
+        "manifest.json",
+        &manifest_bytes,
+        temp_id,
+    )?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn atomic_cache_file(
+    directory: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+    temp_id: u64,
+) -> Result<()> {
+    use std::io::Write;
+    let temp = directory.join(format!(".{name}.{}-{temp_id}.tmp", std::process::id()));
+    let final_path = directory.join(name);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .with_context(|| format!("creating temporary cache artifact {}", temp.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("writing temporary cache artifact {}", temp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("flushing temporary cache artifact {}", temp.display()))?;
+    drop(file);
+    std::fs::rename(&temp, &final_path).with_context(|| {
+        format!(
+            "atomically publishing cache artifact {}",
+            final_path.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn cleanup_known_cache_payloads(directory: &std::path::Path) -> Result<()> {
+    for item in std::fs::read_dir(directory)
+        .with_context(|| format!("cleaning cache entry {}", directory.display()))?
+    {
+        let item = item?;
+        let name = item.file_name().to_string_lossy().into_owned();
+        let known = name == "graph.json"
+            || name == "regions.json"
+            || name == "last-used"
+            || name == "compile.lock"
+            || (name.starts_with("program-") && name.ends_with(".dll"))
+            || (name.starts_with('.') && name.ends_with(".tmp"));
+        if !known {
+            continue;
+        }
+        let kind = item.file_type()?;
+        if kind.is_symlink() {
+            bail!(
+                "refusing to rewrite cache entry containing a symlink at {}",
+                item.path().display()
+            );
+        } else if kind.is_file() {
+            std::fs::remove_file(item.path())
+                .with_context(|| format!("removing old cache payload {}", item.path().display()))?;
+        } else {
+            bail!(
+                "refusing to rewrite cache entry with unexpected payload {}",
+                item.path().display()
+            );
+        }
     }
-    std::fs::rename(&temp_manifest, manifest_path).context("committing GCC cache manifest")?;
     Ok(())
 }
 
@@ -1659,12 +2392,10 @@ where
     let mut identity = cache_identity(nodes)?;
     let cache_key = identity.digest.as_bytes().to_vec();
 
-    if let Some(program) = process_cache()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Sono-GCC process cache lock poisoned"))?
-        .get(&cache_key)
-        .cloned()
-    {
+    if let Some(program) = process_cached_program(&cache_key)? {
+        if program._cache_lease.is_some() {
+            touch_cache_last_used(&program._library.directory);
+        }
         let timings = CompileTimings {
             cache_lookup: lookup_started.elapsed(),
             graph_identity: identity.identity_time,
@@ -1679,15 +2410,28 @@ where
         ));
     }
 
-    {
-        let mut active = in_progress_cache()
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Sono-GCC compilation registry lock poisoned"))?;
-        if !active.insert(cache_key.clone()) {
-            bail!("Sono-GCC compilation for this exact Watch graph is already running");
+    // Serialize same-process cold requests even when neither persistent store
+    // is writable. The weak registry retains only currently active identities.
+    let gate = compilation_gate(&cache_key)?;
+    let _gate_guard = gate
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Sono-GCC per-graph compilation gate poisoned"))?;
+    if let Some(program) = process_cached_program(&cache_key)? {
+        if program._cache_lease.is_some() {
+            touch_cache_last_used(&program._library.directory);
         }
+        return Ok(compile_result(
+            program,
+            identity.digest,
+            CacheHit::Process,
+            CompileTimings {
+                cache_lookup: lookup_started.elapsed(),
+                graph_identity: identity.identity_time,
+                ..CompileTimings::default()
+            },
+            nodes,
+        ));
     }
-    let _in_progress = InProgressGuard(cache_key.clone());
 
     if let Some(cache) = load_disk_cache(nodes, &identity)? {
         let DiskCacheLoad {
@@ -1715,48 +2459,73 @@ where
         ));
     }
 
-    let disk_lock = match try_disk_cache_lock(&identity.directory) {
-        Ok(Some(lock)) => Some(lock),
-        Ok(None) => bail!("another process is compiling this exact Sono-GCC cache entry"),
+    let mut disk_lock = match try_disk_cache_lock(&identity.directory, &identity.digest) {
+        Ok(lock) => Some(lock),
         Err(primary_error) => {
             identity.directory = fallback_cache_root().join(&identity.digest);
-            match try_disk_cache_lock(&identity.directory) {
-                Ok(Some(lock)) => Some(lock),
-                Ok(None) => bail!("another process is compiling this exact Sono-GCC cache entry"),
+            match try_disk_cache_lock(&identity.directory, &identity.digest) {
+                Ok(lock) => Some(lock),
                 Err(fallback_error) => {
-                    let _ = primary_error;
-                    let _ = fallback_error;
+                    eprintln!(
+                        "Sono-GCC persistent cache unavailable ({}; {}); compilation remains process-local",
+                        primary_error, fallback_error
+                    );
                     None
                 }
             }
         }
     };
-    // A different process may have populated the cache between the first
-    // lookup and acquisition of the entry lock.
-    if let Some(cache) = load_disk_cache(nodes, &identity)? {
-        let DiskCacheLoad {
-            program,
-            native_load,
-            disk_validation,
-            metadata_reconstruction,
-        } = cache;
-        let program = std::sync::Arc::new(program);
-        insert_process_cache(cache_key, program.clone())?;
-        let timings = CompileTimings {
-            cache_lookup: lookup_started.elapsed().saturating_sub(native_load),
-            native_load,
-            graph_identity: identity.identity_time,
-            disk_validation,
-            metadata_reconstruction,
-            ..CompileTimings::default()
-        };
-        return Ok(compile_result(
-            program,
-            identity.digest,
-            CacheHit::Persistent,
-            timings,
-            nodes,
-        ));
+    // Requests for the same key wait on the per-entry OS lock. After waiting,
+    // recheck the process cache and the persistent payload before compiling.
+    for _ in 0..3 {
+        if let Some(program) = process_cached_program(&cache_key)? {
+            if program._cache_lease.is_some() {
+                touch_cache_last_used(&program._library.directory);
+            }
+            return Ok(compile_result(
+                program,
+                identity.digest,
+                CacheHit::Process,
+                CompileTimings {
+                    cache_lookup: lookup_started.elapsed(),
+                    graph_identity: identity.identity_time,
+                    ..CompileTimings::default()
+                },
+                nodes,
+            ));
+        }
+        let persisted_valid = inspect_cache_payload(&identity.directory, &identity.digest)
+            .is_ok_and(|(_, compatible)| compatible);
+        if !persisted_valid || disk_lock.is_none() {
+            break;
+        }
+        disk_lock.take().unwrap().unlock()?;
+        if let Some(cache) = load_disk_cache(nodes, &identity)? {
+            let DiskCacheLoad {
+                program,
+                native_load,
+                disk_validation,
+                metadata_reconstruction,
+            } = cache;
+            let program = std::sync::Arc::new(program);
+            insert_process_cache(cache_key.clone(), program.clone())?;
+            let timings = CompileTimings {
+                cache_lookup: lookup_started.elapsed().saturating_sub(native_load),
+                native_load,
+                graph_identity: identity.identity_time,
+                disk_validation,
+                metadata_reconstruction,
+                ..CompileTimings::default()
+            };
+            return Ok(compile_result(
+                program,
+                identity.digest,
+                CacheHit::Persistent,
+                timings,
+                nodes,
+            ));
+        }
+        disk_lock = Some(try_disk_cache_lock(&identity.directory, &identity.digest)?);
     }
 
     on_compile_start();
@@ -1825,6 +2594,51 @@ mod tests {
     use serde_json::{json, Value};
     use std::sync::Arc;
 
+    #[test]
+    fn region_size_buckets_cover_boundaries_without_overlap() {
+        let cases = [
+            (1, 0),
+            (2, 1),
+            (3, 2),
+            (4, 2),
+            (5, 3),
+            (8, 3),
+            (9, 4),
+            (16, 4),
+            (17, 5),
+            (32, 5),
+            (33, 6),
+            (64, 6),
+            (65, 7),
+        ];
+        for (size, expected_bucket) in cases {
+            assert_eq!(region_size_bucket(size), expected_bucket, "size {size}");
+        }
+    }
+
+    #[test]
+    fn dispatch_policy_leaves_single_operation_regions_to_watch_vm() {
+        let nodes: Vec<EngineNode> = serde_json::from_value(json!([
+            {"value": 1.0}, {"value": 2.0}, {"func": "Add", "args": [0, 1]},
+            {"value": 3.0}, {"value": 4.0}, {"func": "Add", "args": [3, 4]},
+            {"value": 5.0}, {"func": "Multiply", "args": [5, 6]}
+        ]))
+        .unwrap();
+        let units = compile_units(&nodes).unwrap();
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| unit.compiled_nodes.len())
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+
+        let selected = dispatchable_units(units);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].root, 7);
+        assert_eq!(selected[0].compiled_nodes.len(), 2);
+    }
+
     fn append_node(nodes: &mut Vec<EngineNode>, node: Value) -> usize {
         let index = nodes.len();
         nodes.push(serde_json::from_value(node).unwrap());
@@ -1840,10 +2654,10 @@ mod tests {
         ]))
         .unwrap();
         let mut states = vec![0; nodes.len()];
-        assert!(eligible(&nodes, 2, &mut states));
+        assert!(eligible(&nodes, 2, &mut states, 0));
         for root in [3, 4, 5, 6] {
             let mut states = vec![0; nodes.len()];
-            assert!(eligible(&nodes, root, &mut states));
+            assert!(eligible(&nodes, root, &mut states, 0));
             assert!(is_vm_cut(&nodes, root, &nodes[root]));
         }
         let units = compile_units(&nodes).unwrap();
@@ -1854,10 +2668,34 @@ mod tests {
     }
 
     #[test]
-    fn vm_cut_inventory_covers_86_runtime_operation_kinds() {
+    fn vm_cut_inventory_covers_runtime_operations_and_all_easings() {
         let names = VM_CUT_FUNCTIONS.iter().copied().collect::<HashSet<_>>();
-        assert_eq!(VM_CUT_FUNCTIONS.len(), 86);
+        assert_eq!(VM_CUT_FUNCTIONS.len(), 88);
         assert_eq!(names.len(), VM_CUT_FUNCTIONS.len());
+        let easing_names = ["In", "Out", "InOut", "OutIn"]
+            .into_iter()
+            .flat_map(|direction| {
+                [
+                    "Sine", "Quad", "Cubic", "Quart", "Quint", "Expo", "Circ", "Back", "Elastic",
+                ]
+                .into_iter()
+                .map(move |family| format!("Ease{direction}{family}"))
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(easing_names.len(), 36);
+        assert!(easing_names.iter().all(|name| is_vm_cut_function(name)));
+        let additional_easings = easing_names
+            .iter()
+            .filter(|name| !names.contains(name.as_str()))
+            .count();
+        assert_eq!(additional_easings, 32);
+        assert_eq!(
+            NATIVE_FUNCTION_COUNT + names.len() + additional_easings,
+            161
+        );
+        assert!(NATIVE_FUNCTION_NAMES
+            .iter()
+            .all(|name| !names.contains(name) && !is_vm_cut_function(name)));
     }
 
     #[test]
@@ -1891,20 +2729,65 @@ mod tests {
             .is_none());
     }
 
+    #[cfg(windows)]
     #[test]
-    fn easing_classifier_keeps_nan_payload_sensitive_elastic_paths_on_vm() {
+    fn compiler_tests_use_an_isolated_temporary_cache_root() {
+        let test_root = test_cache_base();
+        assert!(cache_root().starts_with(&test_root));
+        assert!(fallback_cache_root().starts_with(test_root));
+    }
+
+    #[test]
+    fn easing_classifier_keeps_every_easing_path_on_watch_vm() {
         for direction in ["In", "Out", "InOut", "OutIn"] {
-            let name = format!("Ease{direction}Elastic");
-            assert!(ease_parts(&name).is_some());
-            assert!(used_children(&name, &[0]).is_err());
-            let nodes: Vec<EngineNode> = serde_json::from_value(json!([
-                {"value":0.5}, {"func":name, "args":[0]}
-            ]))
-            .unwrap();
-            assert!(is_vm_cut(&nodes, 1, &nodes[1]));
+            for family in [
+                "Sine", "Quad", "Cubic", "Quart", "Quint", "Expo", "Circ", "Back", "Elastic",
+            ] {
+                let name = format!("Ease{direction}{family}");
+                assert!(ease_parts(&name).is_some());
+                let nodes: Vec<EngineNode> = serde_json::from_value(json!([
+                    {"value":0.5}, {"func":name, "args":[0]}
+                ]))
+                .unwrap();
+                assert!(
+                    is_vm_cut(&nodes, 1, &nodes[1]),
+                    "{name} must remain in WatchVm"
+                );
+            }
         }
-        assert!(ease_parts("EaseInSine").is_some());
         assert!(ease_parts("EaseInElasticExtra").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn elastic_nan_uses_watch_vm_even_when_a_native_program_is_loaded() {
+        let nodes: Vec<EngineNode> = serde_json::from_value(json!([
+            {"value":7777}, {"value":0}, {"func":"Get", "args":[0,1]},
+            {"func":"EaseInElastic", "args":[2]},
+            {"value":1}, {"value":2}, {"func":"Add", "args":[4,5]},
+            {"value":3}, {"func":"Add", "args":[6,7]}
+        ]))
+        .unwrap();
+        let (program, _, _, _) = SonoGccProgram::compile(&nodes).unwrap();
+        assert!(
+            program.region(8).is_some(),
+            "the test must load native code"
+        );
+        assert!(program.region(3).is_none(), "Elastic must remain a VM cut");
+
+        let payload_nan = f64::from_bits(0x7ff8_0000_0000_0042);
+        let mut vm = crate::runtime::WatchVm::new(&nodes);
+        vm.memory.set(7777, 0, payload_nan);
+        let expected = vm.execute(3).unwrap();
+        assert!(expected.is_nan());
+
+        let mut gcc = crate::runtime::WatchVm::new(&nodes);
+        gcc.memory = vm.memory.clone();
+        gcc.set_sono_gcc_program(Some(Arc::new(program)));
+        let actual = gcc.execute(3).unwrap();
+        assert_eq!(actual.to_bits(), expected.to_bits());
+        assert_eq!(gcc.sono_gcc_regions_executed(), 0);
+        assert_eq!(gcc.sono_gcc_vm_to_native_cut_calls(), 0);
     }
 
     #[cfg(windows)]
@@ -1940,7 +2823,11 @@ mod tests {
         .unwrap();
         let identity = cache_identity(&nodes).unwrap();
         let manifest = CacheManifest {
-            schema: 3,
+            format: CACHE_ENTRY_FORMAT.to_owned(),
+            schema: CACHE_MANIFEST_SCHEMA,
+            cache_key: identity.digest.clone(),
+            renderer_version: env!("CARGO_PKG_VERSION").to_owned(),
+            created_unix_ms: crate::cache_manager::now_unix_ms(),
             compiler_backend: COMPILER_BACKEND_VERSION.to_owned(),
             runtime_abi: COMPILED_RUNTIME_ABI_VERSION.to_owned(),
             rustc_identity: identity.rustc_identity.clone(),
@@ -1950,6 +2837,7 @@ mod tests {
             graph_len: identity.graph_bytes.len(),
             library_name: "program-test.dll".to_owned(),
             library_sha1: "checksum".to_owned(),
+            library_len: 1,
             metadata_name: "regions.json".to_owned(),
             metadata_sha1: "metadata-checksum".to_owned(),
             metadata_len: 42,
@@ -1969,6 +2857,120 @@ mod tests {
         stale.flags = COMPILER_FLAGS_ID.to_owned();
         stale.rustc_identity.push_str("-old");
         assert!(!cache_manifest_matches(&stale, &identity));
+        stale.rustc_identity = identity.rustc_identity.clone();
+        stale.library_name = "..\\outside.dll".to_owned();
+        assert!(!cache_manifest_matches(&stale, &identity));
+        stale.library_name = "program-test.dll".to_owned();
+        stale.metadata_name = "..\\outside.json".to_owned();
+        assert!(!cache_manifest_matches(&stale, &identity));
+        assert!(!is_single_file_name("../outside.dll"));
+        assert!(!is_single_file_name("C:\\outside.dll"));
+        assert!(is_single_file_name("program-cache.dll"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cache_payload_write_uses_atomic_same_directory_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        atomic_cache_file(directory.path(), "graph.json", b"graph-payload", 99).unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("graph.json")).unwrap(),
+            b"graph-payload"
+        );
+        let leftovers = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|item| item.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(leftovers, [std::ffi::OsString::from("graph.json")]);
+        cleanup_known_cache_payloads(directory.path()).unwrap();
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unknown_manifest_schema_is_rejected_before_payload_deserialization() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("manifest.json"),
+            br#"{"schema":3,"target":"old-target"}"#,
+        )
+        .unwrap();
+        let error =
+            inspect_cache_manifest(directory.path(), "0123456789abcdef0123456789abcdef01234567")
+                .unwrap_err();
+        assert!(error.to_string().contains("older or unknown schema"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn oversized_cache_manifest_is_rejected_before_payload_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let key = "0123456789abcdef0123456789abcdef01234567";
+        let value = serde_json::json!({
+            "format": CACHE_ENTRY_FORMAT,
+            "schema": CACHE_MANIFEST_SCHEMA,
+            "cache_key": key,
+            "renderer_version": env!("CARGO_PKG_VERSION"),
+            "created_unix_ms": 0,
+            "compiler_backend": COMPILER_BACKEND_VERSION,
+            "runtime_abi": COMPILED_RUNTIME_ABI_VERSION,
+            "rustc_identity": "test rustc",
+            "target": "x86_64-pc-windows-msvc",
+            "flags": COMPILER_FLAGS_ID,
+            "graph_sha1": "0".repeat(40),
+            "graph_len": 1,
+            "library_name": "program.dll",
+            "library_sha1": "0".repeat(40),
+            "library_len": MAX_CACHE_PAYLOAD_BYTES + 1,
+            "metadata_name": "regions.json",
+            "metadata_sha1": "0".repeat(40),
+            "metadata_len": 1,
+            "region_count": 0,
+            "original_compile_ms": 0
+        });
+        std::fs::write(
+            directory.path().join("manifest.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+
+        let error = inspect_cache_manifest(directory.path(), key).unwrap_err();
+        assert!(error.to_string().contains("payload size is invalid"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn structurally_invalid_region_metadata_is_never_accepted() {
+        let manifest = CacheManifest {
+            format: CACHE_ENTRY_FORMAT.to_owned(),
+            schema: CACHE_MANIFEST_SCHEMA,
+            cache_key: "0".repeat(40),
+            renderer_version: env!("CARGO_PKG_VERSION").to_owned(),
+            created_unix_ms: 0,
+            compiler_backend: COMPILER_BACKEND_VERSION.to_owned(),
+            runtime_abi: COMPILED_RUNTIME_ABI_VERSION.to_owned(),
+            rustc_identity: "test".into(),
+            target: "test".into(),
+            flags: COMPILER_FLAGS_ID.to_owned(),
+            graph_sha1: "graph".into(),
+            graph_len: 1,
+            library_name: "program.dll".into(),
+            library_sha1: "library".into(),
+            library_len: 1,
+            metadata_name: "regions.json".into(),
+            metadata_sha1: "metadata".into(),
+            metadata_len: 1,
+            region_count: 0,
+            original_compile_ms: 0,
+        };
+        let metadata = CachedProgramMetadata {
+            schema: 1,
+            graph_sha1: "graph".into(),
+            compiled_operations: None,
+            eligible_operations: None,
+            regions: Vec::new(),
+        };
+        assert!(validate_cached_metadata(&metadata, 1, &manifest).is_err());
     }
 
     #[cfg(windows)]
@@ -1991,8 +2993,25 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn cold_compilation_gates_share_same_key_and_allow_unrelated_keys() {
+        let first = compilation_gate(b"graph-a").unwrap();
+        let same = compilation_gate(b"graph-a").unwrap();
+        let other = compilation_gate(b"graph-b").unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+
+        let held = first.lock().unwrap();
+        assert!(same.try_lock().is_err());
+        assert!(other.try_lock().is_ok());
+        drop(held);
+        assert!(same.try_lock().is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn concurrent_precompile_requests_share_one_safe_exact_graph_compile() {
         use std::{
+            sync::atomic::{AtomicBool, Ordering},
             sync::mpsc,
             time::{SystemTime, UNIX_EPOCH},
         };
@@ -2003,7 +3022,8 @@ mod tests {
             .as_nanos() as u64
             ^ u64::from(std::process::id());
         let nodes: Vec<EngineNode> = serde_json::from_value(json!([
-            {"value":nonce}, {"value":1}, {"func":"Add", "args":[0,1]}
+            {"value":nonce}, {"value":1}, {"func":"Add", "args":[0,1]},
+            {"func":"Add", "args":[2,1]}
         ]))
         .unwrap();
         let worker_nodes = nodes.clone();
@@ -2018,15 +3038,23 @@ mod tests {
         started_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the cache miss should reach the compile stage");
-        let duplicate = precompile(&nodes).unwrap_err();
-        assert!(duplicate
-            .to_string()
-            .contains("compilation for this exact Watch graph is already running"));
+        let duplicate_started = Arc::new(AtomicBool::new(false));
+        let duplicate_started_in_thread = Arc::clone(&duplicate_started);
+        let duplicate_nodes = nodes.clone();
+        let duplicate = std::thread::spawn(move || {
+            precompile_with_progress(&duplicate_nodes, move || {
+                duplicate_started_in_thread.store(true, Ordering::SeqCst);
+            })
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!duplicate_started.load(Ordering::SeqCst));
         release_tx.send(()).unwrap();
         let first = worker.join().unwrap().unwrap();
-        let mut compiled_again = false;
-        let second = precompile_with_progress(&nodes, || compiled_again = true).unwrap();
-        assert!(!compiled_again, "a process cache hit must not recompile");
+        let second = duplicate.join().unwrap().unwrap();
+        assert!(
+            !duplicate_started.load(Ordering::SeqCst),
+            "the waiting request should reuse the completed compilation"
+        );
         assert_eq!(second.cache_hit, CacheHit::Process);
         assert_eq!(first.cache_key, second.cache_key);
         assert_eq!(first.compiled_operations, second.compiled_operations);
@@ -2053,7 +3081,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn native_regions_match_watch_vm_for_every_compiled_operation() {
+    fn native_regions_and_vm_cuts_match_watch_vm_over_adversarial_numbers() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let mut operations = [
@@ -2149,11 +3177,12 @@ mod tests {
                 1
             };
             let args = inputs.iter().take(count).copied().collect::<Vec<_>>();
-            let mut root = append_node(&mut nodes, json!({"func":operation, "args":args}));
+            let operation_node = append_node(&mut nodes, json!({"func":operation, "args":args}));
+            let mut root = operation_node;
             for _ in 0..4 {
                 root = append_node(&mut nodes, json!({"func":"Negate", "args":[root]}));
             }
-            roots.push((operation.clone(), root));
+            roots.push((operation.clone(), operation_node, root));
         }
         // Keep this differential run independent of a previous DLL cached for
         // the same synthetic graph, so it always exercises fresh compilation.
@@ -2170,21 +3199,52 @@ mod tests {
         assert!(cache_hit);
         assert!(Arc::ptr_eq(&program, &cached));
         assert_eq!(program.region_count(), roots.len());
+        for (operation, operation_node, root) in &roots {
+            let region = program
+                .region(*root)
+                .expect("the final Negates form a native region");
+            let direct_native = !is_vm_cut(&nodes, *operation_node, &nodes[*operation_node]);
+            assert_eq!(
+                region.compiled_nodes.contains(operation_node),
+                direct_native,
+                "{operation} must use its declared native or WatchVm path"
+            );
+        }
         let cases = [
-            [0.0, -0.0, 1.5, -2.25],
-            [1.0, 0.5, -1.0, 2.0],
-            [f64::MIN_POSITIVE, f64::MAX / 2.0, 1.0, 3.0],
-            [f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0],
-            [f64::from_bits(0x7ff8_0000_0000_0042), -3.5, 2.0, 0.5],
-            [9.75, -3.5, 2.0, 0.5],
-            [2.0, 4.0, -8.0, 3.0],
+            [0.0, -0.0, 1.5, -2.25, 0.0],
+            [1.0, 0.5, -1.0, 2.0, -0.0],
+            [f64::MIN_POSITIVE, f64::MAX / 2.0, 1.0, 3.0, f64::MIN],
+            [f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0, f64::MAX],
+            [
+                f64::from_bits(0x7ff8_0000_0000_0042),
+                f64::from_bits(0x7ff8_0000_0000_0001),
+                0.0,
+                -0.0,
+                f64::NEG_INFINITY,
+            ],
+            [
+                f64::from_bits(0xfff8_0000_0000_1234),
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::from_bits(0x7ff8_0000_0000_00a5),
+                -3.0,
+            ],
+            [9.75, -3.5, 2.0, 0.5, f64::EPSILON],
+            [2.0, 4.0, -8.0, 3.0, f64::MAX],
+            [
+                f64::from_bits(1),
+                f64::from_bits(0x8000_0000_0000_0001),
+                -1.0,
+                1.0,
+                0.0,
+            ],
         ];
         for case in cases {
             let mut memory = crate::runtime::Memory::new();
             for (slot, value) in case.into_iter().enumerate() {
                 memory.set(7777, slot, value);
             }
-            for (operation, root) in &roots {
+            for (operation, _, root) in &roots {
                 let mut vm = crate::runtime::WatchVm::new(&nodes);
                 vm.memory = memory.clone();
                 let expected = vm.execute(*root).unwrap();
@@ -2238,7 +3298,8 @@ mod tests {
             {"value":0}, {"value":0}, {"value":1}, {"value":0},
             {"func":"Draw", "args":[14,15,16,17,18,19,20,21,22,23,24]},
             {"value":3}, {"value":8}, {"func":"Spawn", "args":[27,28]},
-            {"func":"Add", "args":[3,4,7,13,26,29]}
+            {"func":"Add", "args":[3,4,7,13,26,29]},
+            {"value":0}, {"func":"Add", "args":[30,31]}
         ]))
         .unwrap();
         let root = nodes.len() - 1;
@@ -2288,7 +3349,9 @@ mod tests {
                 json!({"func":"Get", "args":[block,index]}),
             ));
         }
-        let root = append_node(&mut nodes, json!({"func":"Add", "args":cuts}));
+        let sum = append_node(&mut nodes, json!({"func":"Add", "args":cuts}));
+        let zero = append_node(&mut nodes, json!({"value":0}));
+        let root = append_node(&mut nodes, json!({"func":"Add", "args":[sum,zero]}));
         let (program, _, _, _) = SonoGccProgram::compile(&nodes).unwrap();
         assert_eq!(
             program.region(root).unwrap().cut_nodes.len(),
@@ -2372,7 +3435,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn native_regions_use_watch_vm_for_dynamic_get_addresses() {
-        let nodes: Vec<EngineNode> = serde_json::from_value(json!([
+        let mut nodes: Vec<EngineNode> = serde_json::from_value(json!([
             {"value":7777}, {"value":0}, {"value":1},
             {"func":"Add", "args":[0,1]},
             {"func":"Add", "args":[1,2]},
@@ -2380,7 +3443,7 @@ mod tests {
             {"value":2}, {"func":"Add", "args":[5,6]}
         ]))
         .unwrap();
-        let root = nodes.len() - 1;
+        let root = append_node(&mut nodes, json!({"func":"Add", "args":[7,2]}));
         let (program, _, _, _) = SonoGccProgram::compile(&nodes).unwrap();
         assert!(program.region(root).is_some());
 
@@ -2397,7 +3460,7 @@ mod tests {
         assert_eq!(actual.to_bits(), expected.to_bits());
         assert_eq!(gcc.function_counts, expected_counts);
         assert_eq!(gcc.evaluation_count(), expected_evaluations);
-        assert_eq!(gcc.sono_gcc_regions_executed(), 3);
+        assert_eq!(gcc.sono_gcc_regions_executed(), 1);
     }
 
     #[cfg(not(windows))]

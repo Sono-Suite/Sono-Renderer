@@ -1,0 +1,5 @@
+[
+  {"time": 1.0, "event": "hit", "note_type": "normal", "payload": {}},
+  {"time": 1.5, "event": "hit", "note_type": "special", "payload": {}},
+  {"time": 2.0, "event": "miss", "note_type": "normal", "payload": {}}
+]

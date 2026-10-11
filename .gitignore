@@ -18,7 +18,11 @@ target/
 #.idea/
 
 TestingSuite/
-artifacts/
+artifacts/*
+!artifacts/nle-validation/
+artifacts/nle-validation/*
+!artifacts/nle-validation/*.png
+!artifacts/nle-validation/README.md
 # Private Sonolus client analysis — NEVER COMMIT
 /sono-apk/
 /sdb-ref/
@@ -34,5 +38,6 @@ artifacts/
 /renders/
 /diagnostics/
 /tmp/
+/web/node_modules/
 
 assets.zip

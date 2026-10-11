@@ -1,0 +1,31 @@
+{
+  "format": "sono-chart-authoring-schema",
+  "schema_version": 1,
+  "engine": {
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "archetypes": [
+    {
+      "id": "ReplaceWithExactEngineArchetype",
+      "label": "Human-readable name",
+      "category": "Example",
+      "initial_data": [
+        { "name": "ReplaceWithFieldName", "value": 0 }
+      ],
+      "timing": {
+        "path": "/0/value",
+        "unit": "watchSeconds"
+      },
+      "properties": [
+        {
+          "path": "/0/value",
+          "label": "Example numeric value",
+          "description": "Replace this description with verified engine authoring guidance.",
+          "minimum": -1000,
+          "maximum": 1000,
+          "required": true
+        }
+      ]
+    }
+  ]
+}

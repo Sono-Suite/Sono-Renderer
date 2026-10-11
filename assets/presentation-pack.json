@@ -1,0 +1,1726 @@
+{
+    "format":  "sono-renderer-presentation-asset-pack",
+    "schema_version":  1,
+    "id":  "sono-reference",
+    "name":  "Sono-Renderer supplied presentation reference",
+    "description":  "Reference visual asset collection. Glyph prefix families whose meaning is not established by visible content are classified structurally and remain semantically unassigned.",
+    "assets":  [
+                   {
+                       "id":  "ap",
+                       "source":  "ap.mp4",
+                       "kind":  "video",
+                       "family":  "all-perfect-animation",
+                       "variant_group":  "all-perfect.ap",
+                       "selector":  {
+                                        "aspect_ratio":  "16:9"
+                                    },
+                       "variants":  [
+                                        {
+                                            "source":  "ap_43.mp4",
+                                            "selector":  {
+                                                             "aspect_ratio":  "4:3"
+                                                         }
+                                        }
+                                    ],
+                       "tags":  [
+                                    "visible-content:all-perfect",
+                                    "media:video",
+                                    "audio-stream:present"
+                                ]
+                   },
+                   {
+                       "id":  "append_bg",
+                       "source":  "append_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "ap-v1",
+                       "source":  "ap-v1.mp4",
+                       "kind":  "video",
+                       "family":  "all-perfect-animation",
+                       "variant_group":  "all-perfect.ap-v1",
+                       "selector":  {
+                                        "aspect_ratio":  "16:9"
+                                    },
+                       "variants":  [
+                                        {
+                                            "source":  "ap-v1_43.mp4",
+                                            "selector":  {
+                                                             "aspect_ratio":  "4:3"
+                                                         }
+                                        }
+                                    ],
+                       "tags":  [
+                                    "visible-content:all-perfect",
+                                    "media:video",
+                                    "audio-stream:present"
+                                ]
+                   },
+                   {
+                       "id":  "autolive",
+                       "source":  "autolive.png",
+                       "kind":  "image",
+                       "family":  "auto-indicator"
+                   },
+                   {
+                       "id":  "autolive-en",
+                       "source":  "autolive-en.png",
+                       "kind":  "image",
+                       "family":  "auto-indicator",
+                       "language":  "en"
+                   },
+                   {
+                       "id":  "background_full",
+                       "source":  "background_full.png",
+                       "kind":  "image",
+                       "family":  "background-family"
+                   },
+                   {
+                       "id":  "background-v1_full",
+                       "source":  "background-v1_full.png",
+                       "kind":  "image",
+                       "family":  "background-family"
+                   },
+                   {
+                       "id":  "black_bg",
+                       "source":  "black_bg.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "collab-tag",
+                       "source":  "collab-tag.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "combo",
+                       "source":  "combo.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "combo.b%",
+                       "source":  "combo/b%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b.",
+                       "source":  "combo/b..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b-",
+                       "source":  "combo/b-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_%",
+                       "source":  "combo/b_%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_.",
+                       "source":  "combo/b_..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_-",
+                       "source":  "combo/b_-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_0",
+                       "source":  "combo/b_0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_1",
+                       "source":  "combo/b_1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_2",
+                       "source":  "combo/b_2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_3",
+                       "source":  "combo/b_3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_4",
+                       "source":  "combo/b_4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_5",
+                       "source":  "combo/b_5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_6",
+                       "source":  "combo/b_6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_7",
+                       "source":  "combo/b_7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_8",
+                       "source":  "combo/b_8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_9",
+                       "source":  "combo/b_9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b_c",
+                       "source":  "combo/b_c.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b0",
+                       "source":  "combo/b0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b1",
+                       "source":  "combo/b1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b2",
+                       "source":  "combo/b2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b3",
+                       "source":  "combo/b3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b4",
+                       "source":  "combo/b4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b5",
+                       "source":  "combo/b5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b6",
+                       "source":  "combo/b6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b7",
+                       "source":  "combo/b7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b8",
+                       "source":  "combo/b8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.b9",
+                       "source":  "combo/b9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.b",
+                       "tags":  [
+                                    "family-prefix:b semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n%",
+                       "source":  "combo/n%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n.",
+                       "source":  "combo/n..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n-",
+                       "source":  "combo/n-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_%",
+                       "source":  "combo/n_%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_.",
+                       "source":  "combo/n_..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_-",
+                       "source":  "combo/n_-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_0",
+                       "source":  "combo/n_0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_1",
+                       "source":  "combo/n_1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_2",
+                       "source":  "combo/n_2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_3",
+                       "source":  "combo/n_3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_4",
+                       "source":  "combo/n_4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_5",
+                       "source":  "combo/n_5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_6",
+                       "source":  "combo/n_6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_7",
+                       "source":  "combo/n_7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_8",
+                       "source":  "combo/n_8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_9",
+                       "source":  "combo/n_9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n_c",
+                       "source":  "combo/n_c.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n0",
+                       "source":  "combo/n0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n1",
+                       "source":  "combo/n1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n2",
+                       "source":  "combo/n2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n3",
+                       "source":  "combo/n3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n4",
+                       "source":  "combo/n4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n5",
+                       "source":  "combo/n5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n6",
+                       "source":  "combo/n6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n7",
+                       "source":  "combo/n7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n8",
+                       "source":  "combo/n8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.n9",
+                       "source":  "combo/n9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.nt",
+                       "source":  "combo/nt.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.n",
+                       "tags":  [
+                                    "family-prefix:n semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p%",
+                       "source":  "combo/p%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p.",
+                       "source":  "combo/p..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p-",
+                       "source":  "combo/p-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_%",
+                       "source":  "combo/p_%.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_.",
+                       "source":  "combo/p_..png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_-",
+                       "source":  "combo/p_-.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_0",
+                       "source":  "combo/p_0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_1",
+                       "source":  "combo/p_1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_2",
+                       "source":  "combo/p_2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_3",
+                       "source":  "combo/p_3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_4",
+                       "source":  "combo/p_4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_5",
+                       "source":  "combo/p_5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_6",
+                       "source":  "combo/p_6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_7",
+                       "source":  "combo/p_7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_8",
+                       "source":  "combo/p_8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_9",
+                       "source":  "combo/p_9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p_c",
+                       "source":  "combo/p_c.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "filename-style:underscore",
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p0",
+                       "source":  "combo/p0.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p1",
+                       "source":  "combo/p1.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p2",
+                       "source":  "combo/p2.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p3",
+                       "source":  "combo/p3.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p4",
+                       "source":  "combo/p4.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p5",
+                       "source":  "combo/p5.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p6",
+                       "source":  "combo/p6.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p7",
+                       "source":  "combo/p7.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p8",
+                       "source":  "combo/p8.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.p9",
+                       "source":  "combo/p9.png",
+                       "kind":  "glyph",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.pe",
+                       "source":  "combo/pe.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "combo.pt",
+                       "source":  "combo/pt.png",
+                       "kind":  "sprite",
+                       "family":  "combo.glyph-family.p",
+                       "tags":  [
+                                    "family-prefix:p semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "easy_bg",
+                       "source":  "easy_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "eternal_bg",
+                       "source":  "eternal_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "expert_bg",
+                       "source":  "expert_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "extra",
+                       "source":  "extra.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "hard_bg",
+                       "source":  "hard_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "judge.1",
+                       "source":  "judge/1.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:PERFECT"
+                                ]
+                   },
+                   {
+                       "id":  "judge.2",
+                       "source":  "judge/2.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:GREAT"
+                                ]
+                   },
+                   {
+                       "id":  "judge.3",
+                       "source":  "judge/3.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:GOOD"
+                                ]
+                   },
+                   {
+                       "id":  "judge.4",
+                       "source":  "judge/4.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:BAD"
+                                ]
+                   },
+                   {
+                       "id":  "judge.5",
+                       "source":  "judge/5.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:MISS"
+                                ]
+                   },
+                   {
+                       "id":  "judge.6",
+                       "source":  "judge/6.png",
+                       "kind":  "sprite",
+                       "family":  "judgement-word-art",
+                       "tags":  [
+                                    "visible-label:AUTO"
+                                ]
+                   },
+                   {
+                       "id":  "lane",
+                       "source":  "lane.png",
+                       "kind":  "image",
+                       "family":  "lane-family"
+                   },
+                   {
+                       "id":  "lane_full",
+                       "source":  "lane_full.png",
+                       "kind":  "image",
+                       "family":  "lane-family"
+                   },
+                   {
+                       "id":  "lane-v1_full",
+                       "source":  "lane-v1_full.png",
+                       "kind":  "image",
+                       "family":  "lane-family"
+                   },
+                   {
+                       "id":  "life",
+                       "source":  "life.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "life.bg",
+                       "source":  "life/bg.png",
+                       "kind":  "image",
+                       "family":  "life-layer-family"
+                   },
+                   {
+                       "id":  "life.danger",
+                       "source":  "life/danger.png",
+                       "kind":  "image",
+                       "family":  "life-layer-family"
+                   },
+                   {
+                       "id":  "life.digit.0",
+                       "source":  "life/digit/0.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "0"
+                   },
+                   {
+                       "id":  "life.digit.1",
+                       "source":  "life/digit/1.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "1"
+                   },
+                   {
+                       "id":  "life.digit.2",
+                       "source":  "life/digit/2.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "2"
+                   },
+                   {
+                       "id":  "life.digit.3",
+                       "source":  "life/digit/3.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "3"
+                   },
+                   {
+                       "id":  "life.digit.4",
+                       "source":  "life/digit/4.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "4"
+                   },
+                   {
+                       "id":  "life.digit.5",
+                       "source":  "life/digit/5.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "5"
+                   },
+                   {
+                       "id":  "life.digit.6",
+                       "source":  "life/digit/6.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "6"
+                   },
+                   {
+                       "id":  "life.digit.7",
+                       "source":  "life/digit/7.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "7"
+                   },
+                   {
+                       "id":  "life.digit.8",
+                       "source":  "life/digit/8.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "8"
+                   },
+                   {
+                       "id":  "life.digit.9",
+                       "source":  "life/digit/9.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "9"
+                   },
+                   {
+                       "id":  "life.digit.n",
+                       "source":  "life/digit/n.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "character":  "n"
+                   },
+                   {
+                       "id":  "life.digit.s0",
+                       "source":  "life/digit/s0.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s1",
+                       "source":  "life/digit/s1.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s2",
+                       "source":  "life/digit/s2.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s3",
+                       "source":  "life/digit/s3.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s4",
+                       "source":  "life/digit/s4.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s5",
+                       "source":  "life/digit/s5.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s6",
+                       "source":  "life/digit/s6.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s7",
+                       "source":  "life/digit/s7.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s8",
+                       "source":  "life/digit/s8.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.s9",
+                       "source":  "life/digit/s9.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "life.digit.sn",
+                       "source":  "life/digit/sn.png",
+                       "kind":  "glyph",
+                       "family":  "life.glyphs"
+                   },
+                   {
+                       "id":  "life.mask",
+                       "source":  "life/mask.png",
+                       "kind":  "image",
+                       "family":  "life-layer-family"
+                   },
+                   {
+                       "id":  "life.normal",
+                       "source":  "life/normal.png",
+                       "kind":  "image",
+                       "family":  "life-layer-family"
+                   },
+                   {
+                       "id":  "life.overflow",
+                       "source":  "life/overflow.png",
+                       "kind":  "image",
+                       "family":  "life-layer-family"
+                   },
+                   {
+                       "id":  "life-v1",
+                       "source":  "life-v1.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "master",
+                       "source":  "master.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "master_bg",
+                       "source":  "master_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "mv_line",
+                       "source":  "mv_line.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "normal_bg",
+                       "source":  "normal_bg.png",
+                       "kind":  "image",
+                       "family":  "difficulty-background-family",
+                       "tags":  [
+                                    "filename-hint:difficulty"
+                                ]
+                   },
+                   {
+                       "id":  "over",
+                       "source":  "over.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "rainbow",
+                       "source":  "rainbow.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "score.bar",
+                       "source":  "score/bar.png",
+                       "kind":  "image",
+                       "family":  "score-layer-family"
+                   },
+                   {
+                       "id":  "score.bg",
+                       "source":  "score/bg.png",
+                       "kind":  "image",
+                       "family":  "score-layer-family"
+                   },
+                   {
+                       "id":  "score.digit.%",
+                       "source":  "score/digit/%.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "%"
+                   },
+                   {
+                       "id":  "score.digit..",
+                       "source":  "score/digit/..png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "."
+                   },
+                   {
+                       "id":  "score.digit.-",
+                       "source":  "score/digit/-.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "-"
+                   },
+                   {
+                       "id":  "score.digit.+",
+                       "source":  "score/digit/+.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "+"
+                   },
+                   {
+                       "id":  "score.digit.0",
+                       "source":  "score/digit/0.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "0"
+                   },
+                   {
+                       "id":  "score.digit.1",
+                       "source":  "score/digit/1.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "1"
+                   },
+                   {
+                       "id":  "score.digit.2",
+                       "source":  "score/digit/2.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "2"
+                   },
+                   {
+                       "id":  "score.digit.3",
+                       "source":  "score/digit/3.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "3"
+                   },
+                   {
+                       "id":  "score.digit.4",
+                       "source":  "score/digit/4.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "4"
+                   },
+                   {
+                       "id":  "score.digit.5",
+                       "source":  "score/digit/5.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "5"
+                   },
+                   {
+                       "id":  "score.digit.6",
+                       "source":  "score/digit/6.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "6"
+                   },
+                   {
+                       "id":  "score.digit.7",
+                       "source":  "score/digit/7.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "7"
+                   },
+                   {
+                       "id":  "score.digit.8",
+                       "source":  "score/digit/8.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "8"
+                   },
+                   {
+                       "id":  "score.digit.9",
+                       "source":  "score/digit/9.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "9"
+                   },
+                   {
+                       "id":  "score.digit.n",
+                       "source":  "score/digit/n.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "character":  "n"
+                   },
+                   {
+                       "id":  "score.digit.plus",
+                       "source":  "score/digit/plus.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs"
+                   },
+                   {
+                       "id":  "score.digit.s%",
+                       "source":  "score/digit/s%.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s.",
+                       "source":  "score/digit/s..png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s-",
+                       "source":  "score/digit/s-.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s+",
+                       "source":  "score/digit/s+.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s0",
+                       "source":  "score/digit/s0.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s1",
+                       "source":  "score/digit/s1.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s2",
+                       "source":  "score/digit/s2.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s3",
+                       "source":  "score/digit/s3.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s4",
+                       "source":  "score/digit/s4.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s5",
+                       "source":  "score/digit/s5.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s6",
+                       "source":  "score/digit/s6.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s7",
+                       "source":  "score/digit/s7.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s8",
+                       "source":  "score/digit/s8.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.s9",
+                       "source":  "score/digit/s9.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs",
+                       "tags":  [
+                                    "family-prefix:s",
+                                    "semantics:unverified"
+                                ]
+                   },
+                   {
+                       "id":  "score.digit.sn",
+                       "source":  "score/digit/sn.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs"
+                   },
+                   {
+                       "id":  "score.digit.splus",
+                       "source":  "score/digit/splus.png",
+                       "kind":  "glyph",
+                       "family":  "score.glyphs"
+                   },
+                   {
+                       "id":  "score.fg",
+                       "source":  "score/fg.png",
+                       "kind":  "image",
+                       "family":  "score-layer-family"
+                   },
+                   {
+                       "id":  "score.rank.chr.a",
+                       "source":  "score/rank/chr/a.png",
+                       "kind":  "image",
+                       "family":  "score-rank-character",
+                       "character":  "A"
+                   },
+                   {
+                       "id":  "score.rank.chr.b",
+                       "source":  "score/rank/chr/b.png",
+                       "kind":  "image",
+                       "family":  "score-rank-character",
+                       "character":  "B"
+                   },
+                   {
+                       "id":  "score.rank.chr.c",
+                       "source":  "score/rank/chr/c.png",
+                       "kind":  "image",
+                       "family":  "score-rank-character",
+                       "character":  "C"
+                   },
+                   {
+                       "id":  "score.rank.chr.d",
+                       "source":  "score/rank/chr/d.png",
+                       "kind":  "image",
+                       "family":  "score-rank-character",
+                       "character":  "D"
+                   },
+                   {
+                       "id":  "score.rank.chr.s",
+                       "source":  "score/rank/chr/s.png",
+                       "kind":  "image",
+                       "family":  "score-rank-character",
+                       "character":  "S"
+                   },
+                   {
+                       "id":  "score.rank.txt.en.a",
+                       "source":  "score/rank/txt/en/a.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "en",
+                       "variant_group":  "score-rank-caption.a",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.en.b",
+                       "source":  "score/rank/txt/en/b.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "en",
+                       "variant_group":  "score-rank-caption.b",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.en.c",
+                       "source":  "score/rank/txt/en/c.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "en",
+                       "variant_group":  "score-rank-caption.c",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.en.d",
+                       "source":  "score/rank/txt/en/d.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "en",
+                       "variant_group":  "score-rank-caption.d",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.en.s",
+                       "source":  "score/rank/txt/en/s.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "en",
+                       "variant_group":  "score-rank-caption.s",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.jp.a",
+                       "source":  "score/rank/txt/jp/a.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "jp",
+                       "variant_group":  "score-rank-caption.a",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.jp.b",
+                       "source":  "score/rank/txt/jp/b.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "jp",
+                       "variant_group":  "score-rank-caption.b",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.jp.c",
+                       "source":  "score/rank/txt/jp/c.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "jp",
+                       "variant_group":  "score-rank-caption.c",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.jp.d",
+                       "source":  "score/rank/txt/jp/d.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "jp",
+                       "variant_group":  "score-rank-caption.d",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "score.rank.txt.jp.s",
+                       "source":  "score/rank/txt/jp/s.png",
+                       "kind":  "image",
+                       "family":  "score-rank-caption",
+                       "language":  "jp",
+                       "variant_group":  "score-rank-caption.s",
+                       "tags":  [
+                                    "visible-label:SCORE RANK"
+                                ]
+                   },
+                   {
+                       "id":  "start_bg",
+                       "source":  "start_bg.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "start_grad",
+                       "source":  "start_grad.png",
+                       "kind":  "image"
+                   },
+                   {
+                       "id":  "tournament-mode",
+                       "source":  "tournament-mode.png",
+                       "kind":  "image",
+                       "family":  "tournament-indicator",
+                       "language":  "ja"
+                   },
+                   {
+                       "id":  "tournament-mode-en",
+                       "source":  "tournament-mode-en.png",
+                       "kind":  "image",
+                       "family":  "tournament-indicator",
+                       "language":  "en"
+                   }
+               ]
+}

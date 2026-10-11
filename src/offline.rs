@@ -81,7 +81,7 @@ pub fn audio_window(level_start: f64, bgm_offset: f64) -> Result<AudioWindow> {
     if !level_start.is_finite() || level_start < 0.0 || !bgm_offset.is_finite() {
         bail!("audio timeline inputs must be finite and level start nonnegative");
     }
-    let source_time = level_start + bgm_offset;
+    let source_time = crate::export_timeline::watch_to_media_time(level_start, bgm_offset);
     Ok(AudioWindow {
         source_start: source_time.max(0.0),
         leading_silence: (-source_time).max(0.0),
@@ -95,6 +95,8 @@ pub struct FrameSession<'a> {
     profile: bool,
     runtime_construction: std::time::Duration,
     atlas_identity_preparation: std::time::Duration,
+    ui_event_index: usize,
+    ui_gameplay_state: Option<crate::render_ui::UiGameplayState>,
 }
 
 /// Immutable renderer inputs shared with the render worker. Watch state is
@@ -113,6 +115,7 @@ pub(crate) struct FrameRenderResources {
     particle_bindings: BTreeMap<i64, String>,
     particles_enabled: bool,
     ui: crate::render_ui::RendererUiConfig,
+    watermark: crate::watermark::WatermarkConfig,
     ui_segment_start: f64,
     ui_segment_duration: f64,
     width: u32,
@@ -134,7 +137,7 @@ pub(crate) struct PreparedFrame {
     pub(crate) report: FrameReport,
     mv_frame: Option<std::sync::Arc<crate::export_mv::MvFrame>>,
     particle_draws: Option<Vec<crate::particles::ParticleSpriteDraw>>,
-    ui_values: Vec<f64>,
+    ui_state: crate::render_ui::UiFrameState,
     vm: std::time::Duration,
     preparation: std::time::Duration,
     total_start: Option<std::time::Instant>,
@@ -153,6 +156,10 @@ pub struct RenderedFrame {
     pub report: FrameReport,
     pub rgb: Vec<u8>,
     pub profile: Option<FrameStageProfile>,
+    /// State supplied to the generic gameplay-UI compositor for this frame.
+    /// Exposed so diagnostics and regression captures can identify the values
+    /// actually rendered without inferring gameplay outcomes from chart data.
+    pub ui_state: crate::render_ui::UiFrameState,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -270,6 +277,12 @@ impl<'a> WatchFrameStepper<'a> {
         &mut self.runtime
     }
 
+    /// Attach an optional Sonolus Replay Data resource before advancing the
+    /// Watch timeline. This affects only replay stream queries.
+    pub fn set_replay_data_gzip(&mut self, data: &[u8]) -> Result<()> {
+        self.runtime.set_replay_data_gzip(data)
+    }
+
     pub(crate) fn set_execution_mode_with_compile_policy(
         &mut self,
         mode: crate::sono_gcc::WatchExecutionMode,
@@ -277,6 +290,15 @@ impl<'a> WatchFrameStepper<'a> {
     ) {
         self.runtime
             .set_execution_mode_with_compile_policy(mode, compile_on_demand);
+    }
+
+    pub(crate) fn set_watch_compatibility(
+        &mut self,
+        policy: crate::runtime::WatchCompatibilityPolicy,
+        random_seed: u64,
+    ) -> Result<()> {
+        self.runtime.set_compatibility_policy(policy);
+        self.runtime.set_random_seed(random_seed)
     }
 
     pub(crate) fn set_parallel_updates(
@@ -356,12 +378,26 @@ impl<'a> EventSession<'a> {
             .set_execution_mode_with_compile_policy(mode, compile_on_demand);
     }
 
+    pub(crate) fn set_watch_compatibility(
+        &mut self,
+        policy: crate::runtime::WatchCompatibilityPolicy,
+        random_seed: u64,
+    ) -> Result<()> {
+        self.stepper.set_watch_compatibility(policy, random_seed)
+    }
+
     pub(crate) fn set_parallel_updates(
         &mut self,
         enabled: bool,
         worker_count: Option<usize>,
     ) -> Result<()> {
         self.stepper.set_parallel_updates(enabled, worker_count)
+    }
+
+    pub(crate) fn performance_compile_metrics(
+        &self,
+    ) -> Option<crate::performance::SonoGccCompilationMetrics> {
+        self.stepper.runtime.performance_compile_metrics()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -507,6 +543,11 @@ impl<'a> EventSession<'a> {
 }
 
 impl<'a> FrameSession<'a> {
+    /// Attach optional Watch replay streams before rendering the first frame.
+    pub fn set_replay_data_gzip(&mut self, data: &[u8]) -> Result<()> {
+        self.stepper.runtime_mut().set_replay_data_gzip(data)
+    }
+
     pub fn skin_render_modes(
         &self,
     ) -> (
@@ -516,6 +557,17 @@ impl<'a> FrameSession<'a> {
         (self.render.requested_skin_mode, self.render.skin_mode)
     }
     pub(crate) fn set_export_control(&mut self, control: crate::export_control::ExportControl) {
+        if let Some(particles) = &self.render.particles {
+            for warning in &particles.warnings {
+                control.log_once(
+                    format!(
+                        "particle-resource:{}:{}",
+                        warning.resource_name, warning.effect_name
+                    ),
+                    warning.to_string(),
+                );
+            }
+        }
         self.stepper.runtime_mut().set_export_control(control);
     }
 
@@ -528,6 +580,14 @@ impl<'a> FrameSession<'a> {
             .set_execution_mode_with_compile_policy(mode, compile_on_demand);
     }
 
+    pub(crate) fn set_watch_compatibility(
+        &mut self,
+        policy: crate::runtime::WatchCompatibilityPolicy,
+        random_seed: u64,
+    ) -> Result<()> {
+        self.stepper.set_watch_compatibility(policy, random_seed)
+    }
+
     pub(crate) fn set_parallel_updates(
         &mut self,
         enabled: bool,
@@ -538,6 +598,12 @@ impl<'a> FrameSession<'a> {
 
     pub(crate) fn execution_mode_status(&self) -> String {
         self.stepper.runtime.execution_mode_status()
+    }
+
+    pub(crate) fn performance_compile_metrics(
+        &self,
+    ) -> Option<crate::performance::SonoGccCompilationMetrics> {
+        self.stepper.runtime.performance_compile_metrics()
     }
 
     pub(crate) fn parallel_updates_status(&self) -> String {
@@ -655,12 +721,84 @@ impl<'a> FrameSession<'a> {
         draw_tracing: bool,
         sources: &crate::render::ResourceOverrides,
     ) -> Result<Self> {
+        Self::new_configured_with_sources_and_watermark(
+            watch,
+            rom,
+            configuration,
+            level,
+            resources_path,
+            skin_name,
+            background_name,
+            effect_name,
+            particle_name,
+            width,
+            height,
+            fps,
+            level_option_overrides,
+            particles_enabled,
+            ui,
+            ui_segment_start,
+            ui_segment_duration,
+            backend,
+            profile,
+            draw_tracing,
+            sources,
+            crate::watermark::WatermarkConfig::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_configured_with_sources_and_watermark(
+        watch: &'a WatchData,
+        rom: &[u8],
+        configuration: &serde_json::Value,
+        level: &formats::LevelData,
+        resources_path: &std::path::Path,
+        skin_name: &str,
+        background_name: Option<&str>,
+        effect_name: Option<&str>,
+        particle_name: Option<&str>,
+        width: u32,
+        height: u32,
+        fps: u32,
+        level_option_overrides: &[(usize, f64)],
+        particles_enabled: bool,
+        mut ui: crate::render_ui::RendererUiConfig,
+        ui_segment_start: f64,
+        ui_segment_duration: f64,
+        backend: crate::render::RenderBackend,
+        profile: bool,
+        draw_tracing: bool,
+        sources: &crate::render::ResourceOverrides,
+        mut watermark: crate::watermark::WatermarkConfig,
+    ) -> Result<Self> {
         if width == 0 || height == 0 || width > 8192 || height > 8192 {
             bail!("frame dimensions must be in 1..=8192");
         }
         if fps == 0 || fps > 240 {
             bail!("FPS must be in 1..=240");
         }
+        ui.prepare_external_data()?;
+        ui.prepare_scoring_for_level(level);
+        ui.validate()?;
+        if watermark.enabled && watermark.loaded_assets.is_empty() && !watermark.assets.is_empty() {
+            watermark.load_external_data()?;
+        }
+        watermark.validate()?;
+        let ui_gameplay_state = match ui.resolved_scoring_source() {
+            crate::render_ui::UiScoringSource::EventTrack => {
+                if ui.events_file.is_some() {
+                    ui.scoring
+                        .as_ref()
+                        .map(crate::render_ui::UiGameplayState::from_config)
+                } else {
+                    None
+                }
+            }
+            crate::render_ui::UiScoringSource::SonoOverlay => ui.gameplay_state_at(0.0)?,
+            crate::render_ui::UiScoringSource::Disabled
+            | crate::render_ui::UiScoringSource::Automatic => None,
+        };
         let runtime_start = profile.then(std::time::Instant::now);
         let mut stepper = WatchFrameStepper::new_with_engine_options(
             watch,
@@ -794,6 +932,7 @@ impl<'a> FrameSession<'a> {
             particle_bindings,
             particles_enabled,
             ui,
+            watermark,
             ui_segment_start,
             ui_segment_duration,
             width,
@@ -812,6 +951,8 @@ impl<'a> FrameSession<'a> {
             profile,
             runtime_construction,
             atlas_identity_preparation,
+            ui_event_index: 0,
+            ui_gameplay_state,
         })
     }
 
@@ -850,6 +991,36 @@ impl<'a> FrameSession<'a> {
 
     pub(crate) fn render_resources(&self) -> std::sync::Arc<FrameRenderResources> {
         self.render.clone()
+    }
+
+    /// Rasterize one already-prepared Watch frame with another pixel backend.
+    /// This keeps cross-backend regression tests focused on raster parity and
+    /// avoids executing the same expensive Watch traversal twice.
+    #[cfg(test)]
+    pub(crate) fn render_prepared_with_backend(
+        &self,
+        prepared: PreparedFrame,
+        backend: crate::render::RenderBackend,
+    ) -> Result<RenderedFrame> {
+        self.render_prepared_with_backend_and_ui(prepared, backend, self.render.ui.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn render_prepared_with_backend_and_ui(
+        &self,
+        prepared: PreparedFrame,
+        backend: crate::render::RenderBackend,
+        ui: crate::render_ui::RendererUiConfig,
+    ) -> Result<RenderedFrame> {
+        let mut resources = (*self.render).clone();
+        resources.backend = backend;
+        resources.ui = ui;
+        resources.gpu = if backend == crate::render::RenderBackend::Wgpu {
+            Some(crate::gpu_render::GpuRenderer::shared()?)
+        } else {
+            None
+        };
+        render_prepared_frame(std::sync::Arc::new(resources), self.profile, prepared)
     }
 
     /// Advance the deterministic host at every frame from level time zero.
@@ -905,11 +1076,62 @@ impl<'a> FrameSession<'a> {
             None
         };
         let timeline = report.timeline.unwrap_or(0.0);
-        let ui_values = resolve_ui_values(
-            &self.render,
-            timeline,
-            &self.stepper.runtime_mut().global_memory,
-        )?;
+        match self.render.ui.resolved_scoring_source() {
+            crate::render_ui::UiScoringSource::EventTrack => {
+                if let (Some(scoring), Some(gameplay)) =
+                    (&self.render.ui.scoring, &mut self.ui_gameplay_state)
+                {
+                    while let Some(event) = self.render.ui.loaded_events.get(self.ui_event_index) {
+                        if event.time > timeline {
+                            break;
+                        }
+                        gameplay.apply(scoring, event)?;
+                        self.ui_event_index += 1;
+                    }
+                }
+            }
+            crate::render_ui::UiScoringSource::SonoOverlay => {
+                self.ui_gameplay_state = self
+                    .render
+                    .ui
+                    .gameplay_state_at_with_frame_rate(timeline, f64::from(self.stepper.fps))?;
+            }
+            crate::render_ui::UiScoringSource::Disabled
+            | crate::render_ui::UiScoringSource::Automatic => {
+                self.ui_gameplay_state = None;
+            }
+        }
+        if let Some(gameplay) = &mut self.ui_gameplay_state {
+            crate::render_ui::apply_note_hud_animations(
+                gameplay,
+                timeline,
+                f64::from(self.stepper.fps),
+            );
+        }
+        let ui_state = crate::render_ui::UiFrameState {
+            time: timeline,
+            frame_rate: f64::from(self.stepper.fps),
+            delta_time: report.runtime_update[1],
+            progress: if self.render.ui_segment_duration > 0.0 {
+                ((timeline - self.render.ui_segment_start) / self.render.ui_segment_duration)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            runtime_entities: report.runtime_entity_count,
+            active_entities: report.active_entity_count,
+            callbacks: report.callbacks.len(),
+            draws: report.display_list.sprites.len(),
+            scheduled_events: report.audio_events.len()
+                + report.scheduled_effects.len()
+                + report.particle_events.len(),
+            memory: Some(self.stepper.runtime_mut().global_memory.clone()),
+            gameplay: self.ui_gameplay_state.clone(),
+            scoring_status: self.render.ui.scoring_status().map(str::to_owned),
+            scoring_details: self.render.ui.scoring_details(),
+            presentation_values: Default::default(),
+            presentation_categories: Default::default(),
+        };
         let mv_frame = self
             .mv
             .as_mut()
@@ -921,7 +1143,7 @@ impl<'a> FrameSession<'a> {
             mv_frame,
             report,
             particle_draws,
-            ui_values,
+            ui_state,
             vm,
             preparation,
             total_start,
@@ -929,55 +1151,6 @@ impl<'a> FrameSession<'a> {
             atlas_identity_preparation: std::mem::take(&mut self.atlas_identity_preparation),
         })
     }
-}
-
-fn resolve_ui_values(
-    resources: &FrameRenderResources,
-    timeline: f64,
-    memory: &crate::runtime::Memory,
-) -> Result<Vec<f64>> {
-    let ui = &resources.ui;
-    if !ui.enabled {
-        return Ok(Vec::new());
-    }
-    ui.validate()?;
-    let mut values = Vec::with_capacity(4);
-    for (enabled, provider) in [
-        (ui.primary_metric.enabled, &ui.primary_metric.provider),
-        (ui.secondary_metric.enabled, &ui.secondary_metric.provider),
-        (ui.combo.enabled, &ui.combo.provider),
-        (ui.judgment.enabled, &ui.judgment.provider),
-    ] {
-        if !enabled {
-            continue;
-        }
-        let value = match provider {
-            crate::render_ui::UiValueProvider::Fixed { value }
-            | crate::render_ui::UiValueProvider::External { value } => *value,
-            crate::render_ui::UiValueProvider::Memory { block_id, index } => {
-                memory.get(*block_id, *index)
-            }
-            crate::render_ui::UiValueProvider::Progress => {
-                if resources.ui_segment_duration > 0.0 {
-                    ((timeline - resources.ui_segment_start) / resources.ui_segment_duration)
-                        .clamp(0.0, 1.0)
-                } else {
-                    0.0
-                }
-            }
-            crate::render_ui::UiValueProvider::EngineMetric { key } => {
-                anyhow::bail!("engine metric provider {key:?} has no authoritative Watch source")
-            }
-            crate::render_ui::UiValueProvider::Accuracy => {
-                anyhow::bail!("accuracy provider is unsupported without a verified Watch source")
-            }
-            crate::render_ui::UiValueProvider::JudgmentDerived { mapping } => anyhow::bail!(
-                "judgment-derived provider {mapping:?} requires a caller-supplied implementation"
-            ),
-        };
-        values.push(value);
-    }
-    Ok(values)
 }
 
 pub(crate) fn render_prepared_frame(
@@ -989,7 +1162,7 @@ pub(crate) fn render_prepared_frame(
         report,
         mv_frame,
         particle_draws,
-        ui_values,
+        ui_state,
         vm,
         preparation,
         total_start,
@@ -1083,19 +1256,27 @@ pub(crate) fn render_prepared_frame(
     let cpu_render = render_start.map(|t| t.elapsed()).unwrap_or_default();
     let backend_wall = backend_start.map(|t| t.elapsed()).unwrap_or_default();
     let ui_start = profile_enabled.then(std::time::Instant::now);
-    if resources.ui.enabled {
-        let mut values = ui_values.into_iter();
-        crate::render_ui::render_overlay(
-            &mut rgb,
-            resources.width,
-            resources.height,
-            report.timeline.unwrap_or(0.0),
-            resources.ui_segment_start,
-            resources.ui_segment_duration,
-            &resources.ui,
-            |_| Ok(values.next().unwrap_or(0.0)),
-        )?;
-    }
+    crate::watermark::render_before_gameplay_ui(
+        &mut rgb,
+        resources.width,
+        resources.height,
+        &resources.watermark,
+        ui_state.time,
+    )?;
+    crate::render_ui::render_gameplay_ui(
+        &mut rgb,
+        resources.width,
+        resources.height,
+        &resources.ui,
+        &ui_state,
+    )?;
+    crate::watermark::render_after_gameplay_ui(
+        &mut rgb,
+        resources.width,
+        resources.height,
+        &resources.watermark,
+        ui_state.time,
+    )?;
     let runtime_ui = ui_start.map(|t| t.elapsed()).unwrap_or_default();
     let profile = total_start.map(|_| FrameStageProfile {
         vm,
@@ -1140,6 +1321,7 @@ pub(crate) fn render_prepared_frame(
         report,
         rgb,
         profile,
+        ui_state,
     };
     if let (Some(start), Some(profile)) = (total_start, rendered.profile.as_mut()) {
         profile.total = start.elapsed();
@@ -1197,6 +1379,12 @@ pub fn hash_draw_commands(display_list: &crate::runtime::DisplayList) -> String 
         digest.update(draw.sprite_id.to_le_bytes());
         for coordinate in draw.corners.iter().flatten().chain(draw.z.iter()) {
             digest.update(coordinate.to_bits().to_le_bytes());
+        }
+        if draw.source_uv != [0.0, 0.0, 1.0, 1.0] {
+            digest.update(b"source-uv");
+            for coordinate in draw.source_uv {
+                digest.update(coordinate.to_bits().to_le_bytes());
+            }
         }
         digest.update(draw.alpha.to_bits().to_le_bytes());
         if let Some(source) = &draw.provenance {
@@ -1364,11 +1552,11 @@ mod tests {
             serde_json::json!({"entities":[{"archetype":"Note","data":[]},{"archetype":"Stage","data":[]}]}),
         )
         .unwrap();
-        let session = EventSession {
+        let mut session = EventSession {
             stepper: WatchFrameStepper::new(&watch, &level, 10).unwrap(),
         };
         let end = crate::export_end::discover(
-            session,
+            &mut session,
             10,
             Some(1.0),
             &formats::EffectAssets {
@@ -1403,11 +1591,11 @@ mod tests {
             )]
             .into(),
         };
-        let session = EventSession {
+        let mut session = EventSession {
             stepper: WatchFrameStepper::new(&watch, &level, 10).unwrap(),
         };
         let end = crate::export_end::discover(
-            session,
+            &mut session,
             10,
             None,
             &assets,
@@ -1420,11 +1608,11 @@ mod tests {
         assert_eq!(end.watch_end, 1.0);
         let unbounded: WatchData =
             serde_json::from_value(serde_json::json!({"archetypes":[{"name":"Note"}]})).unwrap();
-        let session = EventSession {
+        let mut session = EventSession {
             stepper: WatchFrameStepper::new(&unbounded, &level, 10).unwrap(),
         };
         assert!(crate::export_end::discover(
-            session,
+            &mut session,
             10,
             None,
             &assets,
@@ -1439,11 +1627,11 @@ mod tests {
             serde_json::json!({"archetypes":[{"name":"Note","hasInput":true}]}),
         )
         .unwrap();
-        let session = EventSession {
+        let mut session = EventSession {
             stepper: WatchFrameStepper::new(&input, &level, 10).unwrap(),
         };
         assert!(crate::export_end::discover(
-            session,
+            &mut session,
             10,
             Some(1.0),
             &assets,
@@ -1467,11 +1655,11 @@ mod tests {
         }))
         .unwrap();
         let level: formats::LevelData = serde_json::from_value(serde_json::json!({"entities":[{"archetype":"Note","data":[]},{"archetype":"FinalDisplay","data":[]}]})).unwrap();
-        let session = EventSession {
+        let mut session = EventSession {
             stepper: WatchFrameStepper::new(&watch, &level, 10).unwrap(),
         };
         let end = crate::export_end::discover(
-            session,
+            &mut session,
             10,
             Some(1.0),
             &formats::EffectAssets {

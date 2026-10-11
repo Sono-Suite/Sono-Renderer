@@ -12,6 +12,16 @@ Double-click `target/release/renderer.exe`, launch it with no arguments, or use 
 
 See [native GUI workflow and validation](docs/NATIVE_GUI_MILESTONE.md).
 
+## Shared renderer configuration
+
+The desktop application and CLI use the same JSON `RenderConfig`. The GUI can
+load and save full settings files; the CLI can create a template, validate it,
+and render from it with `default-config`, `validate-config`, and
+`render-config`. Relative project paths and profile assets are resolved beside
+the configuration file. The GUI also exposes gameplay UI profiles, watermark
+profiles, execution/backend/scheduling options, diagnostics, and cache cleanup.
+See [configuration options and valid values](README.md#shared-renderer-configuration).
+
 ## Build and inspect
 
 ```text

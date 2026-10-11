@@ -5,18 +5,19 @@ use crate::{
     runtime::{
         AudioEffectEvent, DebugEvent, DestroyedParticleEffect, DisplayList, Memory,
         ParticleEffectEvent, ScheduledEffect, ScheduledLoopedEffect, ScheduledLoopedEffectStop,
-        VmContext, WatchVm,
+        VmContext, WatchCompatibilityPolicy, WatchVm, WatchVmCallbackOutput,
     },
     sono_gcc::{SonoGccProgram, WatchExecutionMode},
     watch::{WatchArchetype, WatchData},
 };
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender},
         Arc,
     },
@@ -46,6 +47,120 @@ const MIN_PARALLEL_STAGE_ENTITIES: usize = 192;
 // callbacks cost more to schedule than they saved. Keep these ordered unless
 // a contiguous batch exceeds the measured loss range.
 const MIN_PARALLEL_BATCH_CALLBACKS: usize = 128;
+const MAX_REPLAY_DATA_UNCOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+const MAX_REPLAY_STREAM_ENTRIES: usize = 1_000_000;
+
+fn checked_replay_entry_total(total: usize, additional: usize) -> Result<usize> {
+    let total = total
+        .checked_add(additional)
+        .context("Replay Data stream entry count overflowed")?;
+    if total > MAX_REPLAY_STREAM_ENTRIES {
+        bail!("Replay Data contains more than {MAX_REPLAY_STREAM_ENTRIES} stream entries");
+    }
+    Ok(total)
+}
+
+/// Replay-provided Watch streams after decoding the official delta encoding.
+/// This is optional host input; normal level renders do not require a replay.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WatchReplayStreams {
+    streams: BTreeMap<i64, Vec<(f64, f64)>>,
+}
+
+#[derive(Deserialize)]
+struct ReplayDataStream {
+    id: i64,
+    keys: Vec<f64>,
+    values: Vec<f64>,
+}
+
+#[derive(Deserialize, Default)]
+struct ReplayDataStreamSection {
+    #[serde(default)]
+    streams: Vec<ReplayDataStream>,
+}
+
+impl WatchReplayStreams {
+    /// Decode the gzip-compressed JSON Replay Data resource's optional streams.
+    /// Expansion is bounded because replay files are external input.
+    pub fn from_gzip_json(data: &[u8]) -> Result<Self> {
+        if !data.starts_with(&[0x1f, 0x8b]) {
+            bail!("Replay Data must be gzip-compressed JSON");
+        }
+        let mut decoder = flate2::read::GzDecoder::new(data);
+        let mut json = Vec::new();
+        decoder
+            .by_ref()
+            .take((MAX_REPLAY_DATA_UNCOMPRESSED_BYTES as u64) + 1)
+            .read_to_end(&mut json)
+            .context("decompressing Replay Data")?;
+        if json.len() > MAX_REPLAY_DATA_UNCOMPRESSED_BYTES {
+            bail!(
+                "decompressed Replay Data exceeds the {MAX_REPLAY_DATA_UNCOMPRESSED_BYTES}-byte limit"
+            );
+        }
+        let section: ReplayDataStreamSection =
+            serde_json::from_slice(&json).context("decoding Replay Data streams")?;
+
+        let mut streams = BTreeMap::new();
+        let mut total_entries = 0usize;
+        for stream in section.streams {
+            if stream.keys.len() != stream.values.len() {
+                bail!(
+                    "Replay Data stream {} has {} keys and {} values",
+                    stream.id,
+                    stream.keys.len(),
+                    stream.values.len()
+                );
+            }
+            total_entries = checked_replay_entry_total(total_entries, stream.keys.len())?;
+            let mut key = 0.0;
+            let mut value = 0.0;
+            let mut previous_key = None;
+            let mut events = Vec::with_capacity(stream.keys.len());
+            for (key_delta, value_delta) in stream.keys.into_iter().zip(stream.values) {
+                if !key_delta.is_finite() || !value_delta.is_finite() {
+                    bail!(
+                        "Replay Data stream {} contains a non-finite delta",
+                        stream.id
+                    );
+                }
+                key += key_delta;
+                value += value_delta;
+                if !key.is_finite() || !value.is_finite() {
+                    bail!(
+                        "Replay Data stream {} delta accumulation overflowed",
+                        stream.id
+                    );
+                }
+                if previous_key.is_some_and(|previous| key < previous) {
+                    bail!("Replay Data stream {} keys are not ordered", stream.id);
+                }
+                previous_key = Some(key);
+                events.push((key, value));
+            }
+            if streams.insert(stream.id, events).is_some() {
+                bail!("Replay Data contains duplicate stream id {}", stream.id);
+            }
+        }
+        Ok(Self { streams })
+    }
+
+    fn into_vm_stream_map(self) -> BTreeMap<(i64, i64), Vec<(f64, f64)>> {
+        self.streams
+            .into_iter()
+            .map(|(id, events)| ((id, 0), events))
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.streams.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.streams.is_empty()
+    }
+}
 
 fn callback_evaluation_limit(level_entity_count: usize) -> usize {
     MIN_CALLBACK_EVALUATIONS
@@ -149,6 +264,16 @@ pub struct FrameRuntimeProfile {
     pub sono_gcc_vm_to_native_cut_calls: u64,
     /// Regions that exceeded stack input storage and needed a heap buffer.
     pub sono_gcc_overflow_input_regions: u64,
+    /// Detailed size histogram, collected only when Watch profiling is enabled.
+    pub sono_gcc_region_size_executions: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    /// VM cut inputs attributed to each successful native region size bucket.
+    pub sono_gcc_region_size_cut_calls: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    /// Singleton regions routed back through WatchVm by the dispatch policy.
+    pub sono_gcc_small_region_bypasses: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    /// Dynamic VM operations evaluated as scalar inputs to native regions.
+    pub sono_gcc_cut_operation_counts: BTreeMap<String, u64>,
+    /// Dynamic region and cut counts by Watch lifecycle stage and archetype.
+    pub sono_gcc_callback_hotspots: BTreeMap<String, (u64, u64)>,
     pub sono_gcc_region_dispatch: std::time::Duration,
     pub sono_gcc_vm_cut_evaluation: std::time::Duration,
     pub sono_gcc_native_execution: std::time::Duration,
@@ -174,6 +299,45 @@ pub struct FrameRuntimeProfile {
     pub stepper_event_aggregation: std::time::Duration,
 }
 
+#[derive(Default)]
+struct SonoGccCallbackMetrics {
+    regions: u64,
+    cuts: u64,
+    region_sizes: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    cut_sizes: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    bypass_sizes: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    cut_operations: BTreeMap<String, u64>,
+}
+
+impl SonoGccCallbackMetrics {
+    fn from_output(output: &WatchVmCallbackOutput) -> Self {
+        Self {
+            regions: output.sono_gcc_regions_executed,
+            cuts: output.sono_gcc_vm_to_native_cut_calls,
+            region_sizes: output.sono_gcc_region_size_executions,
+            cut_sizes: output.sono_gcc_region_size_cut_calls,
+            bypass_sizes: output.sono_gcc_small_region_bypasses,
+            cut_operations: output.sono_gcc_cut_operation_counts.clone(),
+        }
+    }
+
+    fn from_vm(vm: &WatchVm<'_>) -> Self {
+        let (region_sizes, cut_sizes, bypass_sizes) = vm.sono_gcc_region_size_profile();
+        Self {
+            regions: vm.sono_gcc_regions_executed(),
+            cuts: vm.sono_gcc_vm_to_native_cut_calls(),
+            region_sizes,
+            cut_sizes,
+            bypass_sizes,
+            cut_operations: vm
+                .sono_gcc_cut_operation_counts()
+                .iter()
+                .map(|(name, count)| ((*name).to_owned(), *count))
+                .collect(),
+        }
+    }
+}
+
 impl FrameRuntimeProfile {
     pub(crate) fn accumulate(&mut self, other: &Self) {
         self.frame_count += other.frame_count;
@@ -196,6 +360,28 @@ impl FrameRuntimeProfile {
         self.sono_gcc_regions_executed += other.sono_gcc_regions_executed;
         self.sono_gcc_vm_to_native_cut_calls += other.sono_gcc_vm_to_native_cut_calls;
         self.sono_gcc_overflow_input_regions += other.sono_gcc_overflow_input_regions;
+        for index in 0..crate::sono_gcc::REGION_SIZE_BUCKET_COUNT {
+            self.sono_gcc_region_size_executions[index] +=
+                other.sono_gcc_region_size_executions[index];
+            self.sono_gcc_region_size_cut_calls[index] +=
+                other.sono_gcc_region_size_cut_calls[index];
+            self.sono_gcc_small_region_bypasses[index] +=
+                other.sono_gcc_small_region_bypasses[index];
+        }
+        for (name, count) in &other.sono_gcc_cut_operation_counts {
+            *self
+                .sono_gcc_cut_operation_counts
+                .entry(name.clone())
+                .or_default() += count;
+        }
+        for (name, (regions, cuts)) in &other.sono_gcc_callback_hotspots {
+            let counts = self
+                .sono_gcc_callback_hotspots
+                .entry(name.clone())
+                .or_default();
+            counts.0 += regions;
+            counts.1 += cuts;
+        }
         self.sono_gcc_region_dispatch += other.sono_gcc_region_dispatch;
         self.sono_gcc_vm_cut_evaluation += other.sono_gcc_vm_cut_evaluation;
         self.sono_gcc_native_execution += other.sono_gcc_native_execution;
@@ -234,6 +420,7 @@ struct ParallelCallbackTask {
 
 struct ParallelCallbackBatch {
     nodes: Arc<Vec<crate::watch::EngineNode>>,
+    temporary_memory_floor: usize,
     tasks: Vec<ParallelCallbackTask>,
     global_memory: Memory,
     context: VmContext,
@@ -421,7 +608,8 @@ fn execute_parallel_callback(
     task: ParallelCallbackTask,
 ) -> ParallelCallbackResult {
     let phase_start = batch.profiling.then(std::time::Instant::now);
-    let mut vm = WatchVm::new(batch.nodes.as_slice());
+    let mut vm =
+        WatchVm::new_with_stack_floor(batch.nodes.as_slice(), batch.temporary_memory_floor);
     vm.set_profiling(batch.profiling);
     vm.set_accounting(batch.collect_vm_accounting);
     vm.set_sono_gcc_program(batch.sono_gcc_program.clone());
@@ -490,6 +678,9 @@ pub struct WatchRuntime<'a> {
     export_control: crate::export_control::ExportControl,
     watch: &'a WatchData,
     level_entity_count: usize,
+    temporary_memory_floor: usize,
+    compatibility_callback_evaluation_cap: Option<usize>,
+    compatibility_runtime_entity_cap: Option<usize>,
     archetype_defs: Vec<WatchArchetype>,
     archetypes: BTreeMap<String, usize>,
     pub entities: Vec<WatchEntity>,
@@ -541,11 +732,82 @@ pub struct WatchRuntime<'a> {
 }
 
 impl<'a> WatchRuntime<'a> {
+    /// Attach optional replay streams before preprocessing or executing any
+    /// callback. The replay payload only supplies immutable stream input;
+    /// replay absence leaves the normal Watch context unchanged.
+    pub fn set_replay_streams(&mut self, streams: WatchReplayStreams) -> Result<()> {
+        if self.preprocessed || self.last_frame_time.is_some() {
+            bail!("Replay Data must be attached before Watch preprocessing or execution");
+        }
+        let streams = streams.into_vm_stream_map();
+        let entry_count = streams.values().map(Vec::len).sum::<usize>();
+        if entry_count > crate::runtime::MAX_RUNTIME_STREAM_ENTRIES {
+            bail!(
+                "Replay Data exceeds the {}-entry Watch stream limit",
+                crate::runtime::MAX_RUNTIME_STREAM_ENTRIES
+            );
+        }
+        self.context
+            .stream_entry_count
+            .store(entry_count, Ordering::Relaxed);
+        self.context.streams = Arc::new(std::sync::RwLock::new(streams));
+        Ok(())
+    }
+
+    /// Select whether underspecified operations use the renderer's documented
+    /// approximation or fail before evaluating the operation's arguments.
+    pub fn set_compatibility_policy(&mut self, policy: WatchCompatibilityPolicy) {
+        self.context.compatibility_policy = policy;
+    }
+
+    /// Set the deterministic random stream seed before any Watch callback.
+    pub fn set_random_seed(&mut self, seed: u64) -> Result<()> {
+        if self.preprocessed || self.last_frame_time.is_some() {
+            bail!("Watch random seed must be set before preprocessing or execution");
+        }
+        self.context.random_state = Arc::new(AtomicU64::new(seed));
+        Ok(())
+    }
+
+    /// Decode and attach an official gzip-compressed Replay Data JSON resource.
+    pub fn set_replay_data_gzip(&mut self, data: &[u8]) -> Result<()> {
+        self.set_replay_streams(WatchReplayStreams::from_gzip_json(data)?)
+    }
+
+    /// Apply extra work/entity caps for the opt-in compatibility probe. Normal
+    /// rendering keeps its existing limits and behavior.
+    pub(crate) fn set_compatibility_safety_limits(
+        &mut self,
+        callback_evaluation_cap: usize,
+        runtime_entity_cap: usize,
+    ) {
+        self.compatibility_callback_evaluation_cap = Some(callback_evaluation_cap.max(1));
+        self.compatibility_runtime_entity_cap = Some(runtime_entity_cap.max(self.entities.len()));
+    }
+
+    fn callback_evaluation_limit(&self) -> usize {
+        self.compatibility_callback_evaluation_cap.map_or_else(
+            || callback_evaluation_limit(self.level_entity_count),
+            |cap| callback_evaluation_limit(self.level_entity_count).min(cap),
+        )
+    }
+
     pub(crate) fn set_export_control(&mut self, control: crate::export_control::ExportControl) {
         self.export_control = control;
         if self.execution_mode == WatchExecutionMode::SonoGcc {
             self.export_control.log(self.execution_mode_status());
         }
+    }
+
+    fn report_compatibility_warnings(&self, warnings: BTreeMap<String, String>) {
+        for (family, warning) in warnings {
+            self.export_control
+                .log_once(format!("watch-compatibility-{family}"), warning);
+        }
+    }
+
+    pub fn compatibility_warnings(&self) -> Vec<String> {
+        self.export_control.logged_once_messages()
     }
 
     pub fn set_execution_mode(&mut self, mode: WatchExecutionMode) {
@@ -620,7 +882,13 @@ impl<'a> WatchRuntime<'a> {
                 );
             } else {
                 let result = if compile_on_demand {
-                    SonoGccProgram::compile_cached_detailed(&self.watch.nodes)
+                    let control = self.export_control.clone();
+                    SonoGccProgram::compile_cached_detailed_with_progress(
+                        &self.watch.nodes,
+                        move || {
+                            control.report_phase(crate::export_progress::ExportPhase::Compiling)
+                        },
+                    )
                 } else {
                     let cached = SonoGccProgram::compile_if_process_cached(&self.watch.nodes);
                     self.sono_gcc_precompile_deferred = cached.as_ref().is_ok_and(Option::is_none);
@@ -630,6 +898,8 @@ impl<'a> WatchRuntime<'a> {
                         })
                     })
                 };
+                self.export_control
+                    .report_phase(crate::export_progress::ExportPhase::Preparing);
                 match result {
                     Ok(result) => {
                         self.sono_gcc_compile_time = result.timings.compilation;
@@ -690,6 +960,30 @@ impl<'a> WatchRuntime<'a> {
             },
         }
     }
+
+    pub(crate) fn performance_compile_metrics(
+        &self,
+    ) -> Option<crate::performance::SonoGccCompilationMetrics> {
+        (self.execution_mode == WatchExecutionMode::SonoGcc && self.sono_gcc_program.is_some())
+            .then(|| crate::performance::SonoGccCompilationMetrics {
+                cache_state: match self.sono_gcc_cache_hit {
+                    crate::sono_gcc::CacheHit::None => "miss_compiled",
+                    crate::sono_gcc::CacheHit::Process => "process_hit",
+                    crate::sono_gcc::CacheHit::Persistent => "persistent_hit",
+                }
+                .into(),
+                cache_lookup_ms: self.sono_gcc_cache_lookup_time.as_secs_f64() * 1000.0,
+                compilation_ms: self.sono_gcc_compile_time.as_secs_f64() * 1000.0,
+                native_load_ms: self.sono_gcc_native_load_time.as_secs_f64() * 1000.0,
+                graph_identity_ms: self.sono_gcc_graph_identity_time.as_secs_f64() * 1000.0,
+                disk_validation_ms: self.sono_gcc_disk_validation_time.as_secs_f64() * 1000.0,
+                metadata_reconstruction_ms: self
+                    .sono_gcc_metadata_reconstruction_time
+                    .as_secs_f64()
+                    * 1000.0,
+                cache_write_ms: self.sono_gcc_cache_write_time.as_secs_f64() * 1000.0,
+            })
+    }
     pub fn new(watch: &'a WatchData, level: &LevelData) -> Result<Self> {
         let mut archetype_defs = watch.archetypes.clone();
         let mut archetypes = BTreeMap::new();
@@ -734,11 +1028,18 @@ impl<'a> WatchRuntime<'a> {
         }
 
         let level_entity_count = level.entities.len();
+        // The Watch graph is immutable for this runtime. Stack reservation is
+        // a graph-wide analysis, so cache it once instead of repeating an
+        // O(node-count) scan for every lifecycle callback VM.
+        let temporary_memory_floor = crate::runtime::temporary_memory_floor(&watch.nodes);
         let names = collect_entity_names(&level.entities)?;
         let mut runtime = Self {
             export_control: Default::default(),
             watch,
             level_entity_count,
+            temporary_memory_floor,
+            compatibility_callback_evaluation_cap: None,
+            compatibility_runtime_entity_cap: None,
             archetype_defs,
             archetypes,
             entities: Vec::with_capacity(level.entities.len()),
@@ -747,6 +1048,7 @@ impl<'a> WatchRuntime<'a> {
             preprocessed: false,
             context: VmContext {
                 timescale: 1.0,
+                random_state: Arc::new(AtomicU64::new(crate::runtime::DEFAULT_WATCH_RANDOM_SEED)),
                 ..VmContext::default()
             },
             callback_log: Vec::new(),
@@ -1506,6 +1808,27 @@ impl<'a> WatchRuntime<'a> {
             "SpawnParticleEffect",
             "MoveParticleEffect",
             "DestroyParticleEffect",
+            "Random",
+            "RandomInteger",
+            "StreamSet",
+            "StreamHas",
+            "StreamGetValue",
+            "StreamGetPreviousKey",
+            "StreamGetNextKey",
+            "StackInit",
+            "StackEnter",
+            "StackLeave",
+            "StackGrow",
+            "StackPush",
+            "StackPop",
+            "StackGet",
+            "StackSet",
+            "StackGetFrame",
+            "StackSetFrame",
+            "StackGetPointer",
+            "StackSetPointer",
+            "StackGetFramePointer",
+            "StackSetFramePointer",
         ];
         let mut pending = vec![root];
         let mut seen = BTreeSet::new();
@@ -1731,6 +2054,7 @@ impl<'a> WatchRuntime<'a> {
 
         let batch = Arc::new(ParallelCallbackBatch {
             nodes: self.watch.nodes.clone(),
+            temporary_memory_floor: self.temporary_memory_floor,
             tasks,
             global_memory: self.global_memory.clone(),
             context: self.context.clone(),
@@ -1768,7 +2092,7 @@ impl<'a> WatchRuntime<'a> {
                     &[ENTITY_MEMORY, TEMPORARY_MEMORY],
                 );
             if unexpected_global_write {
-                self.accumulate_parallel_callback_profile(&result, true);
+                self.accumulate_parallel_callback_profile(&result, true, stage);
                 let active_index = result.task.active_index;
                 if self.profiling {
                     self.frame_profile.parallel_ordered_callbacks +=
@@ -1789,6 +2113,7 @@ impl<'a> WatchRuntime<'a> {
         &mut self,
         callback: &ParallelCallbackResult,
         speculative: bool,
+        stage: LifecycleStage,
     ) {
         let output = &callback.output;
         self.frame_profile.sono_gcc_regions_executed += output.sono_gcc_regions_executed;
@@ -1799,6 +2124,11 @@ impl<'a> WatchRuntime<'a> {
         self.frame_profile.sono_gcc_region_dispatch += output.sono_gcc_profile_times.0;
         self.frame_profile.sono_gcc_vm_cut_evaluation += output.sono_gcc_profile_times.1;
         self.frame_profile.sono_gcc_native_execution += output.sono_gcc_profile_times.2;
+        self.record_sono_gcc_callback_profile(
+            stage,
+            &callback.task.archetype_name,
+            SonoGccCallbackMetrics::from_output(output),
+        );
         if self.profiling {
             self.frame_profile.callbacks += 1;
             self.frame_profile.callback_vm_construction += callback.vm_construction;
@@ -1815,14 +2145,47 @@ impl<'a> WatchRuntime<'a> {
         }
     }
 
+    fn record_sono_gcc_callback_profile(
+        &mut self,
+        stage: LifecycleStage,
+        archetype: &str,
+        metrics: SonoGccCallbackMetrics,
+    ) {
+        if !self.profiling {
+            return;
+        }
+        for index in 0..crate::sono_gcc::REGION_SIZE_BUCKET_COUNT {
+            self.frame_profile.sono_gcc_region_size_executions[index] +=
+                metrics.region_sizes[index];
+            self.frame_profile.sono_gcc_region_size_cut_calls[index] += metrics.cut_sizes[index];
+            self.frame_profile.sono_gcc_small_region_bypasses[index] += metrics.bypass_sizes[index];
+        }
+        for (name, count) in metrics.cut_operations {
+            *self
+                .frame_profile
+                .sono_gcc_cut_operation_counts
+                .entry(name)
+                .or_default() += count;
+        }
+        let identity = format!("{stage:?}/{archetype}");
+        let hotspot = self
+            .frame_profile
+            .sono_gcc_callback_hotspots
+            .entry(identity)
+            .or_default();
+        hotspot.0 += metrics.regions;
+        hotspot.1 += metrics.cuts;
+    }
+
     fn commit_parallel_callback(
         &mut self,
         callback: ParallelCallbackResult,
         stage: LifecycleStage,
     ) -> Result<f64> {
-        self.accumulate_parallel_callback_profile(&callback, false);
+        self.accumulate_parallel_callback_profile(&callback, false, stage);
         let task = callback.task;
-        let output = callback.output;
+        let mut output = callback.output;
+        self.report_compatibility_warnings(std::mem::take(&mut output.compatibility_warnings));
         let result = match output.result {
             Ok(value) => value,
             Err(error) => {
@@ -1896,6 +2259,7 @@ impl<'a> WatchRuntime<'a> {
             .context("entity id out of range")?
             .archetype_index;
         let archetype = &self.archetype_defs[archetype_index];
+        let archetype_name = archetype.name.clone();
         let Some(value) = callback_ref(archetype, stage).cloned() else {
             if stage == LifecycleStage::Initialize {
                 self.entities[id].initialized = true;
@@ -1903,10 +2267,10 @@ impl<'a> WatchRuntime<'a> {
             return Ok(0.0);
         };
         let node = callback_index(&value)
-            .with_context(|| format!("invalid {stage:?} callback for {}", archetype.name))?;
+            .with_context(|| format!("invalid {stage:?} callback for {archetype_name}"))?;
         let record = CallbackRecord {
             entity_id: Some(id),
-            archetype: archetype.name.clone(),
+            archetype: archetype_name.clone(),
             stage,
             node,
         };
@@ -1914,20 +2278,20 @@ impl<'a> WatchRuntime<'a> {
             self.frame_profile.callbacks += 1;
         }
         let phase_start = self.profiling.then(std::time::Instant::now);
-        let mut vm = WatchVm::new(&self.watch.nodes);
+        let mut vm = WatchVm::new_with_stack_floor(&self.watch.nodes, self.temporary_memory_floor);
         vm.set_profiling(self.profiling);
         vm.set_accounting(self.collect_vm_accounting);
         vm.set_sono_gcc_program(self.sono_gcc_program.clone());
         if let Some(start) = phase_start {
             self.frame_profile.callback_vm_construction += start.elapsed();
         }
-        vm.set_evaluation_limit(callback_evaluation_limit(self.level_entity_count));
+        vm.set_evaluation_limit(self.callback_evaluation_limit());
         let phase_start = self.profiling.then(std::time::Instant::now);
         vm.context = self.context.clone();
         vm.context.entity_data_array_writable = stage == LifecycleStage::Preprocess;
         vm.context.lifecycle_stage = Some(stage as u8);
         vm.context.entity_id = Some(id);
-        vm.context.entity_archetype = Some(archetype.name.clone());
+        vm.context.entity_archetype = Some(archetype_name.clone());
         vm.context.callback_name = Some(format!("{stage:?}"));
         vm.context.callback_node = Some(node);
         vm.set_draw_tracing(self.trace_draws);
@@ -1955,6 +2319,7 @@ impl<'a> WatchRuntime<'a> {
         }
         let phase_start = self.profiling.then(std::time::Instant::now);
         let execution = vm.execute(node);
+        self.report_compatibility_warnings(vm.take_compatibility_warnings());
         if self.profiling {
             self.frame_profile.memory_entries_copied += vm.memory.copied_entries();
         }
@@ -1965,6 +2330,11 @@ impl<'a> WatchRuntime<'a> {
         self.frame_profile.sono_gcc_region_dispatch += dispatch;
         self.frame_profile.sono_gcc_vm_cut_evaluation += cuts;
         self.frame_profile.sono_gcc_native_execution += native;
+        self.record_sono_gcc_callback_profile(
+            stage,
+            &archetype_name,
+            SonoGccCallbackMetrics::from_vm(&vm),
+        );
         if self.profiling {
             if let Some(start) = phase_start {
                 self.frame_profile.callback_execute += start.elapsed();
@@ -1976,8 +2346,7 @@ impl<'a> WatchRuntime<'a> {
             Ok(result) => result,
             Err(error) => {
                 let callback_error = error.context(format!(
-                    "entity {id} ({}) {stage:?} callback node {node}",
-                    archetype.name
+                    "entity {id} ({archetype_name}) {stage:?} callback node {node}"
                 ));
                 self.frame_vm_evaluations += vm.evaluation_count() as u64;
                 self.frame_spawn_requests += vm.spawn_queue.len() as u64;
@@ -2054,14 +2423,14 @@ impl<'a> WatchRuntime<'a> {
             self.frame_profile.callbacks += 1;
         }
         let phase_start = self.profiling.then(std::time::Instant::now);
-        let mut vm = WatchVm::new(&self.watch.nodes);
+        let mut vm = WatchVm::new_with_stack_floor(&self.watch.nodes, self.temporary_memory_floor);
         vm.set_profiling(self.profiling);
         vm.set_accounting(self.collect_vm_accounting);
         vm.set_sono_gcc_program(self.sono_gcc_program.clone());
         if let Some(start) = phase_start {
             self.frame_profile.callback_vm_construction += start.elapsed();
         }
-        vm.set_evaluation_limit(callback_evaluation_limit(self.level_entity_count));
+        vm.set_evaluation_limit(self.callback_evaluation_limit());
         let phase_start = self.profiling.then(std::time::Instant::now);
         vm.context = self.context.clone();
         vm.context.callback_name = Some(format!("{stage:?}"));
@@ -2078,6 +2447,7 @@ impl<'a> WatchRuntime<'a> {
         }
         let phase_start = self.profiling.then(std::time::Instant::now);
         let execution = vm.execute(node);
+        self.report_compatibility_warnings(vm.take_compatibility_warnings());
         if self.profiling {
             self.frame_profile.memory_entries_copied += vm.memory.copied_entries();
         }
@@ -2088,6 +2458,11 @@ impl<'a> WatchRuntime<'a> {
         self.frame_profile.sono_gcc_region_dispatch += dispatch;
         self.frame_profile.sono_gcc_vm_cut_evaluation += cuts;
         self.frame_profile.sono_gcc_native_execution += native;
+        self.record_sono_gcc_callback_profile(
+            stage,
+            "<global>",
+            SonoGccCallbackMetrics::from_vm(&vm),
+        );
         if self.profiling {
             if let Some(start) = phase_start {
                 self.frame_profile.callback_execute += start.elapsed();
@@ -2134,6 +2509,12 @@ impl<'a> WatchRuntime<'a> {
     }
 
     fn enqueue_spawn(&mut self, archetype_id: i64, data: Vec<f64>) -> Result<usize> {
+        if self
+            .compatibility_runtime_entity_cap
+            .is_some_and(|cap| self.entities.len() >= cap)
+        {
+            bail!("bounded compatibility Watch run reached its runtime entity limit");
+        }
         let archetype_index = usize::try_from(archetype_id)
             .ok()
             .filter(|&index| index < self.watch.archetypes.len())
@@ -2352,6 +2733,15 @@ fn in_spawn_range(entity: &WatchEntity, timeline: f64) -> bool {
 mod ui_configuration_tests {
     use super::*;
 
+    fn replay_gzip(json: &serde_json::Value) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(&serde_json::to_vec(json).unwrap())
+            .unwrap();
+        encoder.finish().unwrap()
+    }
+
     fn fixture(callback: usize, nodes: Value, entities: usize) -> (WatchData, LevelData) {
         let watch = serde_json::from_value(serde_json::json!({
             "archetypes":[{"name":"Worker","updateParallel":{"index":callback}}],
@@ -2365,6 +2755,111 @@ mod ui_configuration_tests {
         }))
         .unwrap();
         (watch, level)
+    }
+
+    #[test]
+    fn replay_stream_decoder_accumulates_delta_keys_and_values() {
+        let replay = replay_gzip(&serde_json::json!({
+            "streams":[{"id":7,"keys":[1,2],"values":[10,20]}]
+        }));
+        let streams = WatchReplayStreams::from_gzip_json(&replay).unwrap();
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams.streams[&7], vec![(1.0, 10.0), (3.0, 30.0)]);
+    }
+
+    #[test]
+    fn replay_stream_decoder_rejects_malformed_or_ambiguous_streams() {
+        let uncompressed = serde_json::to_vec(&serde_json::json!({"streams":[]})).unwrap();
+        assert!(WatchReplayStreams::from_gzip_json(&uncompressed).is_err());
+
+        for json in [
+            serde_json::json!({"streams":[{"id":1,"keys":[1,2],"values":[10]}]}),
+            serde_json::json!({"streams":[
+                {"id":1,"keys":[1],"values":[2]},
+                {"id":1,"keys":[1],"values":[3]}
+            ]}),
+            serde_json::json!({"streams":[{"id":1,"keys":[2,-3],"values":[10,20]}]}),
+            serde_json::json!({"streams":[{"id":1,"keys":[1,1],"values":[1e308,1e308]}]}),
+        ] {
+            assert!(WatchReplayStreams::from_gzip_json(&replay_gzip(&json)).is_err());
+        }
+        assert!(checked_replay_entry_total(MAX_REPLAY_STREAM_ENTRIES, 1).is_err());
+        assert_eq!(checked_replay_entry_total(10, 5).unwrap(), 15);
+    }
+
+    #[test]
+    fn replay_streams_reach_watch_queries_through_the_runtime_host() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "archetypes":[{"name":"Probe","initialize":{"index":5}}],
+            "nodes":[
+                {"value":7}, {"value":2}, {"func":"StreamGetValue","args":[0,1]},
+                {"value":4000}, {"value":0}, {"func":"Set","args":[3,4,2]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[{"archetype":"Probe","data":[]}]
+        }))
+        .unwrap();
+        let replay = replay_gzip(&serde_json::json!({
+            "streams":[{"id":7,"keys":[1,2],"values":[10,20]}]
+        }));
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        runtime.set_replay_data_gzip(&replay).unwrap();
+        runtime.frame(0.0).unwrap();
+        assert_eq!(runtime.entities[0].memory.get(4000, 0), 20.0);
+    }
+
+    #[test]
+    fn replay_streams_must_be_attached_before_watch_execution() {
+        let watch: WatchData =
+            serde_json::from_value(serde_json::json!({"archetypes":[],"nodes":[]})).unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({"entities":[]})).unwrap();
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        runtime.preprocess().unwrap();
+        assert!(runtime
+            .set_replay_streams(WatchReplayStreams::default())
+            .is_err());
+    }
+
+    #[test]
+    fn approximate_watch_warnings_are_deduplicated_into_the_job_log() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "archetypes":[{"name":"Worker","preprocess":{"index":9}}],
+            "nodes":[
+                {"value":7}, {"value":3}, {"value":30},
+                {"func":"StreamSet","args":[0,1,2]},
+                {"value":88}, {"func":"StackPush","args":[4]},
+                {"value":0}, {"value":1}, {"func":"Random","args":[6,7]},
+                {"func":"Execute","args":[3,5,8]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[
+                {"archetype":"Worker","data":[]},
+                {"archetype":"Worker","data":[]}
+            ]
+        }))
+        .unwrap();
+        let messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = messages.clone();
+        let control = crate::export_control::ExportControl::with_log(move |message| {
+            sink.lock().unwrap().push(message);
+        });
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        runtime.set_export_control(control.clone());
+        runtime.preprocess().unwrap();
+        let messages = messages.lock().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("Random/RandomInteger")));
+        assert!(messages.iter().any(|message| message.contains("StreamSet")));
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("stack operations")));
+        assert_eq!(control.logged_once_messages(), messages.as_slice());
     }
 
     #[test]
@@ -2638,7 +3133,7 @@ mod ui_configuration_tests {
     fn deferred_gcc_selection_uses_vm_when_background_program_is_not_ready() {
         let mut watch: WatchData = serde_json::from_value(serde_json::json!({
             "archetypes":[],
-            "nodes":[{"value":1},{"value":2},{"func":"Add","args":[0,1]}]
+            "nodes":[{"value":1},{"value":2},{"func":"Add","args":[0,1]},{"func":"Add","args":[2,1]}]
         }))
         .unwrap();
         Arc::make_mut(&mut watch.nodes).push(

@@ -1,16 +1,18 @@
 //! Structured export events. Consumers need no terminal-output parsing.
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     io::{self, IsTerminal, Write},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExportPhase {
     Preparing,
     Validating,
+    Compiling,
     AudioMixing,
     AudioEncoding,
     Rendering,
@@ -18,7 +20,7 @@ pub enum ExportPhase {
     Complete,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ExportProgress {
     pub phase: ExportPhase,
     pub completed_frames: u64,
@@ -36,6 +38,8 @@ pub(crate) struct ProgressTracker(Arc<Mutex<State>>);
 struct State {
     sink: ProgressSink,
     start: Instant,
+    phase_started: Instant,
+    phase_durations: BTreeMap<ExportPhase, Duration>,
     phase: ExportPhase,
     completed: u64,
     total: Option<u64>,
@@ -50,6 +54,8 @@ impl ProgressTracker {
         Self(Arc::new(Mutex::new(State {
             sink,
             start: Instant::now(),
+            phase_started: Instant::now(),
+            phase_durations: BTreeMap::new(),
             phase: ExportPhase::Preparing,
             completed: 0,
             total: None,
@@ -60,6 +66,14 @@ impl ProgressTracker {
     }
     pub fn phase(&self, phase: ExportPhase, total: Option<u64>) {
         let mut state = self.0.lock().unwrap();
+        if state.phase != phase {
+            if state.phase != ExportPhase::Complete {
+                let elapsed = state.phase_started.elapsed();
+                let completed_phase = state.phase;
+                add_phase_duration(&mut state.phase_durations, completed_phase, elapsed);
+            }
+            state.phase_started = Instant::now();
+        }
         state.phase = phase;
         if matches!(phase, ExportPhase::AudioMixing | ExportPhase::Finalizing)
             && state.render_elapsed.is_none()
@@ -71,6 +85,13 @@ impl ProgressTracker {
         }
         state.emit();
     }
+    /// Disjoint monotonic wall spans for the top-level export phases.
+    pub(crate) fn phase_timings(&self) -> BTreeMap<ExportPhase, Duration> {
+        let state = self.0.lock().unwrap();
+        let mut timings = state.phase_durations.clone();
+        add_phase_duration(&mut timings, state.phase, state.phase_started.elapsed());
+        timings
+    }
     pub fn validate_complete(&self) -> anyhow::Result<()> {
         let state = self.0.lock().unwrap();
         anyhow::ensure!(
@@ -79,6 +100,7 @@ impl ProgressTracker {
         );
         Ok(())
     }
+    #[cfg(test)]
     pub fn pulse(&self) {
         let mut state = self.0.lock().unwrap();
         if state.last_event.elapsed() >= Duration::from_millis(250) {
@@ -92,6 +114,16 @@ impl ProgressTracker {
             state.first_frame = Some(Instant::now());
         }
         state.emit();
+    }
+}
+
+fn add_phase_duration(
+    timings: &mut BTreeMap<ExportPhase, Duration>,
+    phase: ExportPhase,
+    elapsed: Duration,
+) {
+    if phase != ExportPhase::Complete {
+        *timings.entry(phase).or_default() += elapsed;
     }
 }
 
@@ -224,6 +256,24 @@ pub fn terminal_sink() -> ProgressSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disjoint_phase_spans_accumulate_by_phase_without_counting_complete() {
+        let mut spans = BTreeMap::new();
+        add_phase_duration(&mut spans, ExportPhase::Preparing, Duration::from_millis(2));
+        add_phase_duration(&mut spans, ExportPhase::Rendering, Duration::from_millis(3));
+        add_phase_duration(&mut spans, ExportPhase::Preparing, Duration::from_millis(4));
+        add_phase_duration(
+            &mut spans,
+            ExportPhase::Complete,
+            Duration::from_millis(100),
+        );
+        assert_eq!(spans[&ExportPhase::Preparing], Duration::from_millis(6));
+        assert_eq!(spans[&ExportPhase::Rendering], Duration::from_millis(3));
+        assert_eq!(
+            spans.values().copied().sum::<Duration>(),
+            Duration::from_millis(9)
+        );
+    }
     #[test]
     fn failed_handoff_does_not_invent_completed_frames() {
         struct Broken;

@@ -1,0 +1,16 @@
+{
+  "app.name":"Sono-Renderer","language.title":"앱 언어","language.description":"Sono-Renderer 인터페이스에 사용할 언어를 선택합니다. 프로젝트와 창작 콘텐츠는 변경되지 않습니다.","language.review_notice":"번역은 기계 번역 초안이며 사람이 언어 검수를 하지 않았습니다.",
+  "nav.home":"홈","nav.quick_render":"빠른 렌더","nav.chart_studio":"차트 스튜디오","nav.presentation_studio":"영상 스튜디오","nav.production":"작업 및 기록","nav.tools":"도구","nav.settings":"설정","nav.diagnostics":"진단",
+  "home.title.welcome":"Sono-Renderer에 오신 것을 환영합니다","home.title.home":"Sono-Renderer 홈","home.question":"무엇을 하시겠어요?","home.intro":"목표를 선택하세요. 하나의 앱에서 Sonolus 렌더링, 차트 제작, 독립형 영상 편집을 할 수 있습니다.",
+  "home.render.title":"레벨 렌더링","home.render.body":"엔진, 레벨, 리소스와 선택 음악을 고른 다음 MP4를 만듭니다. 프로젝트와 고급 설정은 선택 사항입니다.","home.render.action":"빠른 렌더 시작",
+  "home.chart.title":"차트 만들기 / 편집","home.chart.body":"LevelData를 열거나 만들고, 엔티티를 편집하고, 선택한 엔진으로 미리 보고, 검증한 뒤 내보냅니다.","home.chart.action":"차트 스튜디오 열기",
+  "home.video.title":"영상 편집","home.video.body":"일반 영상, 오디오, 이미지, 제목을 편집합니다. Sonolus 콘텐츠는 필요하지 않습니다.","home.video.action":"영상 스튜디오 열기",
+  "home.project.title":"프로젝트 열기","home.project.body":"저장된 렌더 입력 프로젝트나 영상 컴포지션을 이어서 작업합니다.","home.project.render":"렌더 프로젝트…","home.project.video":"영상 컴포지션…",
+  "home.learn.title":"배우기","home.learn.body":"이 버전의 작업 흐름을 짧은 안내에서 검색합니다.","home.learn.action":"시작하기 및 도움말",
+  "common.skip":"지금 건너뛰기","common.help":"도움말","common.cancel":"취소","common.save":"저장","common.clear":"지우기","common.open":"열기","common.export":"내보내기","common.undo":"실행 취소","common.redo":"다시 실행","common.search":"검색","common.loading":"불러오는 중…","common.saved":"저장됨","common.modified":"수정됨",
+  "quick.title":"빠른 렌더","quick.description":"Sonolus 레벨에서 영상을 만듭니다. 프로젝트와 고급 설정은 선택 사항입니다.","quick.check_inputs":"입력 확인","quick.render":"렌더링",
+  "chart.title":"차트 스튜디오","chart.description":"차트 데이터를 작성하고 선택한 엔진으로 미리 보고 검증한 뒤 표준 LevelData로 내보냅니다.","chart.generic_mode":"일반 / 원시 데이터 편집 모드","chart.raw_notice":"필드 이름은 데이터 경로로 표시됩니다. 게임 의미, 시간, 배치 또는 관계를 추측하지 않습니다.","chart.inspect_engine":"선택한 엔진 검사","chart.export_level":"LevelData 내보내기",
+  "presentation.title":"영상 스튜디오","presentation.description":"엔진, LevelData, Watch 또는 Sono-GCC를 불러오지 않고 일반 미디어를 편집합니다.","presentation.media":"미디어","presentation.timeline":"타임라인","presentation.inspector":"검사기","presentation.export":"영상 내보내기",
+  "settings.title":"설정","settings.language":"언어","settings.translation_review":"번역 검수 상태","help.title":"시작하기 및 도움말",
+  "command.app.home":"홈","command.workspace.quick_render":"레벨 렌더링","command.workspace.chart_studio":"차트 만들기 또는 편집","command.workspace.presentation_studio":"영상 편집","command.app.production":"작업 및 기록","command.app.tools":"도구 및 분석","command.app.settings":"설정","command.app.diagnostics":"진단"
+}

@@ -12,6 +12,7 @@ const SHADER: &str = r#"
 struct Params {
   corners: array<vec4<f32>, 4>,
   atlas: vec4<f32>, // x, y, width, height
+  source_uv_rect: vec4<f32>, // u0, v0, u1, v1
   frame: vec4<f32>, // width, height, aspect, alpha
   tint: vec4<f32>,
   sampling: vec4<f32>, // interpolation, background flag, padding
@@ -94,6 +95,9 @@ fn lightweight_uv(coord: vec2<f32>) -> vec2<f32> {
   } else {
     if uv.x < -1e-7 || uv.x > 1.0000001 || uv.y < -1e-7 || uv.y > 1.0000001 { discard; }
   }
+  uv = vec2(
+    p.source_uv_rect.x + clamp(uv.x, 0.0, 1.0) * (p.source_uv_rect.z - p.source_uv_rect.x),
+    p.source_uv_rect.y + clamp(uv.y, 0.0, 1.0) * (p.source_uv_rect.w - p.source_uv_rect.y));
   var texel: vec4<f32>;
   if p.sampling.y > 0.5 {
     let tx=p.atlas.x+clamp(uv.x,0.0,1.0)*(p.atlas.z-1.0);
@@ -114,6 +118,7 @@ fn lightweight_uv(coord: vec2<f32>) -> vec2<f32> {
 struct Params {
     corners: [[f32; 4]; 4],
     atlas: [f32; 4],
+    source_uv_rect: [f32; 4],
     frame: [f32; 4],
     tint: [f32; 4],
     sampling: [f32; 4],
@@ -123,6 +128,7 @@ struct Params {
 struct DrawOp {
     rect: [u32; 4],
     corners: [[f64; 2]; 4],
+    source_uv_rect: [f64; 4],
     alpha: f64,
     tint: [f64; 4],
     interpolation: bool,
@@ -197,8 +203,18 @@ struct Gpu {
 
 pub(crate) struct GpuRenderer {
     gpu: Gpu,
-    atlases: Mutex<HashMap<[u8; 20], Arc<wgpu::Texture>>>,
+    atlases: Mutex<HashMap<[u8; 20], CachedAtlas>>,
+    atlas_clock: std::sync::atomic::AtomicU64,
     adapter: String,
+}
+
+const GPU_ATLAS_CACHE_MAX_ENTRIES: usize = 8;
+const GPU_ATLAS_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+struct CachedAtlas {
+    texture: Arc<wgpu::Texture>,
+    byte_len: u64,
+    last_used: u64,
 }
 
 pub(crate) type AtlasIdentity = [u8; 20];
@@ -245,6 +261,7 @@ impl GpuRenderer {
             ),
             gpu,
             atlases: Mutex::new(HashMap::new()),
+            atlas_clock: std::sync::atomic::AtomicU64::new(1),
         })
     }
 
@@ -266,11 +283,32 @@ impl GpuRenderer {
             .atlases
             .lock()
             .map_err(|_| anyhow::anyhow!("wgpu atlas cache lock was poisoned"))?;
-        if let Some(texture) = cache.get(&identity) {
-            return Ok((texture.clone(), false));
+        if let Some(cached) = cache.get_mut(&identity) {
+            cached.last_used = self
+                .atlas_clock
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok((cached.texture.clone(), false));
         }
-        if cache.len() >= 8 {
-            cache.clear();
+        let byte_len = u64::from(width)
+            .saturating_mul(u64::from(height))
+            .saturating_mul(4);
+        if byte_len <= GPU_ATLAS_CACHE_MAX_BYTES {
+            while cache.len() >= GPU_ATLAS_CACHE_MAX_ENTRIES
+                || cache
+                    .values()
+                    .fold(0_u64, |sum, atlas| sum.saturating_add(atlas.byte_len))
+                    .saturating_add(byte_len)
+                    > GPU_ATLAS_CACHE_MAX_BYTES
+            {
+                let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, atlas)| atlas.last_used)
+                    .map(|(key, _)| *key)
+                else {
+                    break;
+                };
+                cache.remove(&oldest);
+            }
         }
         let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("resident source atlas"),
@@ -306,9 +344,45 @@ impl GpuRenderer {
             },
         );
         let texture = Arc::new(texture);
-        cache.insert(identity, texture.clone());
+        if byte_len <= GPU_ATLAS_CACHE_MAX_BYTES {
+            cache.insert(
+                identity,
+                CachedAtlas {
+                    texture: texture.clone(),
+                    byte_len,
+                    last_used: self
+                        .atlas_clock
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                },
+            );
+        }
         Ok((texture, true))
     }
+}
+
+pub(crate) fn atlas_cache_info() -> (usize, u64, u64) {
+    let Some(Ok(gpu)) = SHARED_GPU.get() else {
+        return (0, 0, GPU_ATLAS_CACHE_MAX_BYTES);
+    };
+    let Ok(cache) = gpu.atlases.lock() else {
+        return (0, 0, GPU_ATLAS_CACHE_MAX_BYTES);
+    };
+    let bytes = cache
+        .values()
+        .fold(0_u64, |sum, atlas| sum.saturating_add(atlas.byte_len));
+    (cache.len(), bytes, GPU_ATLAS_CACHE_MAX_BYTES)
+}
+
+pub(crate) fn clear_atlas_cache() -> usize {
+    let Some(Ok(gpu)) = SHARED_GPU.get() else {
+        return 0;
+    };
+    let Ok(mut cache) = gpu.atlases.lock() else {
+        return 0;
+    };
+    let count = cache.len();
+    cache.clear();
+    count
 }
 
 fn gpu() -> Result<Gpu> {
@@ -517,6 +591,7 @@ fn render(
                 })
             },
             atlas: [x as f32, y as f32, w as f32, h as f32],
+            source_uv_rect: draw.source_uv_rect.map(|value| value as f32),
             frame: [
                 width as f32,
                 height as f32,
@@ -777,6 +852,7 @@ pub(crate) fn render_display_list_rgb_with_skin_mode(
         draws.push(DrawOp {
             rect: [0, 0, bg.width, bg.height],
             corners: quad,
+            source_uv_rect: [0.0, 0.0, 1.0, 1.0],
             alpha: 1.0,
             tint: [1.0; 4],
             interpolation: true,
@@ -794,6 +870,7 @@ pub(crate) fn render_display_list_rgb_with_skin_mode(
         draws.push(DrawOp {
             rect: [0, 0, 1, 1],
             corners: full,
+            source_uv_rect: [0.0, 0.0, 1.0, 1.0],
             alpha: mask[3] as f64 / 255.0,
             tint: [
                 mask[0] as f64 / 255.0,
@@ -829,6 +906,7 @@ pub(crate) fn render_display_list_rgb_with_skin_mode(
         if !c.iter().flatten().all(|v| v.is_finite())
             || !d.alpha.is_finite()
             || !d.z.iter().all(|v| v.is_finite())
+            || !crate::runtime::valid_source_uv(d.source_uv)
             || d.alpha <= 0.0
         {
             continue;
@@ -836,6 +914,7 @@ pub(crate) fn render_display_list_rgb_with_skin_mode(
         draws.push(DrawOp {
             rect: [s.x, s.y, s.width, s.height],
             corners: c,
+            source_uv_rect: d.source_uv,
             alpha: d.alpha.clamp(0.0, 1.0),
             tint: [1.0; 4],
             interpolation: skin.interpolation,
@@ -880,6 +959,7 @@ pub(crate) fn render_display_list_rgb_with_skin_mode(
             draws.push(DrawOp {
                 rect: [s.x, s.y, s.width, s.height],
                 corners: crate::runtime::gpu_transform_particle_corners(d, particle_runtime),
+                source_uv_rect: [0.0, 0.0, 1.0, 1.0],
                 alpha: d.alpha.clamp(0.0, 1.0),
                 tint: [
                     d.color[0] as f64 / 255.0,
@@ -1016,6 +1096,7 @@ mod tests {
         let sprite = DrawOp {
             rect: [0, 0, 1, 1],
             corners: partial,
+            source_uv_rect: [0.0, 0.0, 1.0, 1.0],
             alpha: 0.5,
             tint: [1.0; 4],
             interpolation: false,
@@ -1092,6 +1173,42 @@ mod tests {
     }
 
     #[test]
+    fn gpu_draw_samples_curved_patch_source_uv_rectangle() {
+        let gpu = GpuRenderer::new().unwrap();
+        let pixels = [
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 255, // blue
+            255, 255, 255, 255, // white
+        ];
+        let atlases = [(pixels.as_slice(), 4, 1, atlas_identity(&pixels, 4, 1))];
+        let draw = DrawOp {
+            rect: [0, 0, 4, 1],
+            corners: [[-2.0, -1.0], [-2.0, 1.0], [2.0, 1.0], [2.0, -1.0]],
+            source_uv_rect: [0.5, 0.0, 1.0, 1.0],
+            alpha: 1.0,
+            tint: [1.0; 4],
+            interpolation: false,
+            atlas: 0,
+            background: false,
+            mask: false,
+            skin_mode: crate::skin_render_mode::SkinRenderMode::Standard,
+        };
+        let output = render(
+            &gpu,
+            &atlases,
+            2,
+            1,
+            2.0,
+            FrameBase::Clear([0, 0, 0]),
+            vec![draw],
+            None,
+        )
+        .unwrap();
+        assert_eq!(output, [0, 0, 255, 255, 255, 255]);
+    }
+
+    #[test]
     fn clear_base_background_mask_and_skin_match_exact_cpu_pixels() {
         let gpu = GpuRenderer::new().unwrap();
         let transform = [
@@ -1125,6 +1242,7 @@ mod tests {
                 corners: [[-0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [0.5, -0.5]],
                 z: [0.0; 4],
                 alpha: 1.0,
+                source_uv: [0.0, 0.0, 1.0, 1.0],
                 provenance: None,
                 trace: None,
             }],
@@ -1245,6 +1363,7 @@ mod tests {
                 height: 1,
             }],
             effects: BTreeMap::new(),
+            warnings: vec![],
         };
         let draw = crate::particles::ParticleSpriteDraw {
             sprite_id: 0,

@@ -1,5 +1,50 @@
 # Sono-GCC implementation report
 
+## Follow-up #45 verification update (2026-10-08)
+
+The current compiler identity is `sono-gcc-codegen-v6`. Adversarial exact-bit
+differential testing found that native `Lerp` could preserve a different NaN
+payload than WatchVm. `Lerp`, `LerpClamped`, and all easing operations now
+route through WatchVm, and the v6 backend identity rejects cached v5 native
+artifacts. Current inventory: **41 direct-native operation kinds and 120
+WatchVm scalar-cut kinds** (161 total).
+
+The v6 release path executed on Larp 64x, Baumkuchen, and ARMAGEDDON. Larp's
+profile recorded 34,431 native region entries and 105,410 VM-to-native cuts;
+the archived v4 profile recorded 134,914 entries and 236,089 cuts. The full
+v6 Larp interpreter and GCC exports match byte-for-byte, including the
+encoded H.264/AAC MP4 and SFX event hash. The current repeated timing run was
+made under substantial concurrent system load and does not establish a
+general runtime or whole-render speedup. WatchVm remains the default, oracle,
+and fallback; Sono-GCC remains an experimental opt-in.
+
+See [SONO_GCC_OPTIMIZATION_VERIFICATION.md](SONO_GCC_OPTIMIZATION_VERIFICATION.md)
+for the full methodology, evidence limits, timings, and reproduction paths.
+
+## Follow-up #44 historical optimization update (state before #45, 2026-10-08)
+
+At the end of Follow-up #44, the native code-generation policy was
+`sono-gcc-codegen-v5`: compile
+regions with at least two direct-native operation nodes and leave singleton
+regions to WatchVm. This removes Larp 64x singleton-region calls, reducing
+dynamic native entries by 74.5%, VM-to-native cuts by 55.1%, and cold compile
+time from 66.416 s to 27.524 s. Region metadata shrank 53.4% and the DLL
+45.9%. WatchVm evaluation counts and v4/v5 Draw hashes match.
+
+That v4-to-v5 comparison did **not** show a general steady-state runtime speedup. Five-run unprofiled
+Watch medians were unchanged for Larp, +3.0% slower for v5 GCC on Baumkuchen,
+and +4.6% slower on ARMAGEDDON versus v4, while v5 GCC remained faster than
+VM on all three candidate medians. The filter is retained for its substantial
+cold-compilation/cache-footprint gain; the timing regressions and remaining
+memory-heavy cuts are explicit follow-up work. See the detailed methodology,
+raw-artifact paths, and validation status in
+[SONO_GCC_OPTIMIZATION_REPORT.md](SONO_GCC_OPTIMIZATION_REPORT.md).
+
+The runtime ABI was not changed. Draw, SFX, particle, memory, control-flow,
+and callback semantics continue through the same WatchVm. Compiler backend
+versioning invalidates v4 native artifacts; VM remains default/fallback and
+Sono-GCC remains optional.
+
 ## Follow-up #3 performance update (2026-10-06)
 
 The current release measurements replace earlier single-run performance
@@ -31,18 +76,18 @@ the report states those measurement limits.
 
 Sono-GCC accounts for all 161 operation kinds dispatched by the current `WatchVm`, using two deliberately different paths:
 
-- **75 operation kinds have direct native scalar implementations.** They are emitted only inside a statically bounded, safe native region.
-- **86 operation kinds are VM scalar cuts.** WatchVm evaluates each cut in ordered graph traversal and passes its `f64` result into a native parent when one is safe to compile.
+- **41 operation kinds have direct native scalar implementations.** They are emitted only inside a statically bounded, safe native region.
+- **120 operation kinds are VM scalar cuts.** WatchVm evaluates each cut in ordered graph traversal and passes its `f64` result into a native parent when one is safe to compile.
 
-This is **161/161 represented at the native boundary**, not 161/161 native execution. The 86 cut operations remain implemented and executed by WatchVm. The ABI is currently VM-to-native scalar input; generated code does not call back into the runtime. Graph nodes that do not fit a safe native region execute wholly in WatchVm. The inventory and operation-level observed coverage are in [SONO_GCC_COVERAGE.md](SONO_GCC_COVERAGE.md).
+This is **161/161 represented at the native boundary**, not 161/161 native execution. The 120 cut operations remain implemented and executed by WatchVm. The boundary is VM-to-native scalar input; generated code does not call back into the runtime. Graph nodes that do not fit a safe native region execute wholly in WatchVm. The inventory and operation-level observed coverage are in [SONO_GCC_COVERAGE.md](SONO_GCC_COVERAGE.md).
 
 Watch reports now distinguish unique compiled operation nodes, statically eligible nodes, regions actually executed, and dynamic VM-to-native scalar cut calls. A scalar-cut count is an interface-crossing count, not an estimate of time saved. No separate native-to-VM helper overhead exists because that callback direction is not implemented.
 
 ## Native and VM behavior
 
-The native implementation retains 32 easing variants along with the existing arithmetic, comparison, interpolation, and scalar math set. All constants preserve exact `f64` bits. Elastic easing stays in WatchVm because an earlier native formula changed a NaN payload.
+The v6 native implementation covers the remaining arithmetic, comparison, and scalar math set. All constants preserve exact `f64` bits. `Lerp`, `LerpClamped`, and all easing variants stay in WatchVm after the v6 adversarial test found a native NaN-payload mismatch in `Lerp`.
 
-The 86 VM cuts cover runtime queries, resources, memory, lazy control, loops, drawing, spawn, audio, particles, streams, and the Elastic easing variants. Each operation keeps WatchVm semantics for state, event creation, branch selection, lazy evaluation, errors, and memory access. `If` and related nodes still select branches inside WatchVm. Native scalar parents consume returned values only after ordered cut evaluation.
+The 120 VM cuts cover runtime queries, resources, memory, lazy control, loops, drawing, spawn, audio, particles, streams, interpolation, and easing. Each operation keeps WatchVm semantics for state, event creation, branch selection, lazy evaluation, errors, and memory access. `If` and related nodes still select branches inside WatchVm. Native scalar parents consume returned values only after ordered cut evaluation.
 
 The source-size safety limit is now 64 MiB. This allows the supplied Larp graph to compile; the previous 8 MiB bound rejected it and correctly selected VM fallback.
 

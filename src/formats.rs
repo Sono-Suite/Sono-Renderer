@@ -67,7 +67,7 @@ impl EngineMetadata {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LevelData {
     #[serde(default, rename = "bgmOffset", alias = "bgm_offset")]
     pub bgm_offset: Option<f64>,
@@ -78,7 +78,7 @@ pub struct LevelData {
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LevelEntity {
     #[serde(default)]
     pub archetype: Value,
@@ -94,7 +94,44 @@ pub struct EnginePackage {
     pub metadata: EngineMetadata,
     pub configuration: Value,
     pub rom: Vec<u8>,
+    /// Level-facing archetype declarations. Older/synthetic packages may omit
+    /// this member; callers must then keep raw archetype editing available.
+    #[serde(default)]
+    pub play: Option<EnginePlayData>,
     pub watch: crate::watch::WatchData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EnginePlayData {
+    pub archetypes: Vec<EnginePlayArchetype>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EnginePlayArchetype {
+    pub name: String,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
+}
+
+impl EnginePackage {
+    /// Names declared for LevelData entities by EnginePlayData. Watch
+    /// archetypes describe runtime callbacks and are intentionally not used
+    /// as a substitute when this declaration is absent.
+    pub fn level_archetype_names(&self) -> Vec<&str> {
+        self.play
+            .as_ref()
+            .map(|play| {
+                play.archetypes
+                    .iter()
+                    .map(|archetype| archetype.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +181,34 @@ pub struct ParticleAssets {
     pub rgba: Vec<u8>,
     pub sprites: Vec<ParticleSpriteAsset>,
     pub effects: std::collections::BTreeMap<String, ParticleEffectData>,
+    /// Effect-local failures skipped by the permissive renderer loader.
+    #[serde(default)]
+    pub warnings: Vec<ParticleResourceWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticleResourceWarning {
+    pub resource_name: String,
+    pub effect_name: String,
+    pub reason: String,
+}
+
+impl std::fmt::Display for ParticleResourceWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "particle resource {:?}: skipped effect {:?}: {}",
+            self.resource_name, self.effect_name, self.reason
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParticleValidationMode {
+    /// Skip effect-local invalid entries and retain the rest of the resource.
+    Permissive,
+    /// Reject the resource at its first invalid effect for diagnostics.
+    Strict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,6 +405,12 @@ pub fn load_engine(path: &Path) -> Result<EnginePackage> {
         // Engine Rom is optional in EngineItem. An absent ROM is an empty ROM
         // block; Watch reads from its unpopulated slots resolve to zero.
         let rom = zip_member_optional(path, &["EngineRom", "rom"])?.unwrap_or_default();
+        let play = zip_member_optional(path, &["EnginePlayData", "playData", "play_data"])?
+            .map(|bytes| {
+                serde_json::from_slice(&bytes)
+                    .context("decoding EnginePlayData level archetype declarations")
+            })
+            .transpose()?;
         let watch = serde_json::from_slice(&zip_member(
             path,
             &["EngineWatchData", "watchData", "watch_data"],
@@ -349,6 +420,7 @@ pub fn load_engine(path: &Path) -> Result<EnginePackage> {
             metadata,
             configuration,
             rom,
+            play,
             watch: serde_json::from_value(watch)?,
         });
     }
@@ -364,6 +436,16 @@ pub fn load_engine(path: &Path) -> Result<EnginePackage> {
         .iter()
         .map(|name| root.join(name))
         .find(|path| path.is_file());
+    let play_path = ["EnginePlayData", "playData", "play_data"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file());
+    let play = play_path
+        .map(|path| {
+            serde_json::from_slice(&read_payload(&path)?)
+                .with_context(|| format!("decoding EnginePlayData {}", path.display()))
+        })
+        .transpose()?;
     let watch = pick(&root, &["EngineWatchData", "watchData", "watch_data"])?;
     let watch_value = json_file(&watch)?;
     Ok(EnginePackage {
@@ -374,6 +456,7 @@ pub fn load_engine(path: &Path) -> Result<EnginePackage> {
             .map(|path| read_payload(&path))
             .transpose()?
             .unwrap_or_default(),
+        play,
         watch: serde_json::from_value(watch_value)?,
     })
 }
@@ -423,12 +506,115 @@ pub fn load_level(path: &Path) -> Result<LevelData> {
     load_level_data(path)
 }
 
+/// Authoring/UI entry point with a bounded archive and decompression budget.
+/// The ordinary renderer keeps its established loader and acceptance rules.
+pub fn load_level_bounded(path: &Path, max_bytes: usize) -> Result<LevelData> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("accessing level {}", path.display()))?;
+    if metadata.is_file() && metadata.len() > max_bytes as u64 {
+        bail!("level input exceeds the authoring size limit of {max_bytes} bytes");
+    }
+    if path.is_file()
+        && path
+            .extension()
+            .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("zip"))
+    {
+        let mut level: LevelData = serde_json::from_slice(&zip_member_bounded(
+            path,
+            &["level.data", "data", "LevelData"],
+            max_bytes,
+        )?)?;
+        level.metadata = match zip_member_bounded(path, &["item.json"], max_bytes) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
+            Err(_) => None,
+        };
+        return Ok(level);
+    }
+    if path.is_dir() {
+        let data = pick(path, &["level.data", "data", "LevelData"])?;
+        let mut level = load_level_data_bounded(&data, max_bytes)?;
+        let metadata = path.join("item.json");
+        level.metadata = metadata
+            .is_file()
+            .then(|| {
+                read_payload_bounded(&metadata, max_bytes).and_then(|bytes| {
+                    serde_json::from_slice(&bytes).context("decoding level item metadata")
+                })
+            })
+            .transpose()?;
+        return Ok(level);
+    }
+    load_level_data_bounded(path, max_bytes)
+}
+
 /// Load Sonolus LevelData directly from JSON or gzip-compressed JSON.
 /// No level item metadata, archive, cover, or music file is required here.
 pub fn load_level_data(path: &Path) -> Result<LevelData> {
     let level: LevelData = serde_json::from_slice(&read_payload(path)?)
         .with_context(|| format!("decoding level data {}", path.display()))?;
     Ok(level)
+}
+
+pub fn load_level_data_bounded(path: &Path, max_bytes: usize) -> Result<LevelData> {
+    let data = read_payload_bounded(path, max_bytes)?;
+    serde_json::from_slice(&data)
+        .with_context(|| format!("decoding bounded LevelData {}", path.display()))
+}
+
+fn read_payload_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+    let metadata = fs::metadata(path).with_context(|| format!("accessing {}", path.display()))?;
+    if !metadata.is_file() || metadata.len() > max_bytes as u64 {
+        bail!(
+            "input {} is not a regular file within the {max_bytes}-byte compressed size limit",
+            path.display()
+        );
+    }
+    decode_payload_bounded(fs::read(path)?, max_bytes)
+}
+
+fn decode_payload_bounded(data: Vec<u8>, max_bytes: usize) -> Result<Vec<u8>> {
+    if data.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder =
+            GzDecoder::new(data.as_slice()).take((max_bytes as u64).saturating_add(1));
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded)?;
+        if decoded.len() > max_bytes {
+            bail!("decompressed LevelData exceeds the {max_bytes}-byte authoring limit");
+        }
+        Ok(decoded)
+    } else if data.len() > max_bytes {
+        bail!("LevelData exceeds the {max_bytes}-byte authoring limit");
+    } else {
+        Ok(data)
+    }
+}
+
+fn zip_member_bounded(path: &Path, candidates: &[&str], max_bytes: usize) -> Result<Vec<u8>> {
+    let file =
+        fs::File::open(path).with_context(|| format!("opening package {}", path.display()))?;
+    let mut zip = ZipArchive::new(file).context("package is not a valid ZIP archive")?;
+    if zip.len() > 100_000 {
+        bail!("level archive has too many members for bounded authoring import");
+    }
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index)?;
+        let name = entry.name().to_owned();
+        if candidates
+            .iter()
+            .any(|candidate| name == *candidate || name.ends_with(&format!("/{candidate}")))
+        {
+            let mut data = Vec::new();
+            entry
+                .by_ref()
+                .take((max_bytes as u64).saturating_add(1))
+                .read_to_end(&mut data)?;
+            if data.len() > max_bytes {
+                bail!("level archive member {name} exceeds the {max_bytes}-byte authoring limit");
+            }
+            return decode_payload_bounded(data, max_bytes);
+        }
+    }
+    bail!("none of {candidates:?} found in {}", path.display())
 }
 
 pub fn inspect_scp(path: &Path) -> Result<ScpIndex> {
@@ -623,6 +809,17 @@ fn load_effect_assets_inner(path: &Path, name: &str) -> Result<Option<EffectAsse
 
 /// Load a particle atlas and the effect timelines that reference its sprites.
 pub fn load_particle_assets(path: &Path, name: &str) -> Result<ParticleAssets> {
+    load_particle_assets_with_mode(path, name, ParticleValidationMode::Permissive)
+}
+
+/// Load a particle resource using an explicit validation policy. Strict mode
+/// is intended for resource diagnostics; rendering should use permissive mode
+/// so an isolated malformed effect does not discard valid effects or the atlas.
+pub fn load_particle_assets_with_mode(
+    path: &Path,
+    name: &str,
+    mode: ParticleValidationMode,
+) -> Result<ParticleAssets> {
     let file = fs::File::open(path).with_context(|| format!("opening SCP {}", path.display()))?;
     let mut zip = ZipArchive::new(file).context("SCP is not a valid ZIP archive")?;
     let manifest_path = format!("sonolus/particles/{name}");
@@ -674,12 +871,41 @@ pub fn load_particle_assets(path: &Path, name: &str) -> Result<ParticleAssets> {
         .and_then(Value::as_array)
         .context("ParticleData has no effects array")?;
     let mut effects = std::collections::BTreeMap::new();
+    let mut warnings = Vec::new();
+    let mut effect_names = BTreeSet::new();
     for (index, value) in raw_effects.iter().enumerate() {
-        let effect: ParticleEffectData = serde_json::from_value(value.clone())
-            .with_context(|| format!("decoding ParticleData effect {index}"))?;
-        validate_particle_effect(&effect, sprites.len())?;
-        if effects.insert(effect.name.clone(), effect).is_some() {
-            bail!("ParticleData contains duplicate effect names");
+        let effect_name = value
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("<effect {index}>"));
+        if !effect_name.starts_with("<effect ") && !effect_names.insert(effect_name.clone()) {
+            // Duplicate names make Watch bindings ambiguous across the
+            // resource, so they remain a package-level error.
+            bail!("ParticleData contains duplicate effect name {effect_name:?}");
+        }
+        let parsed = serde_json::from_value::<ParticleEffectData>(value.clone())
+            .map_err(anyhow::Error::from)
+            .and_then(|effect| {
+                validate_particle_effect(&effect, sprites.len())?;
+                Ok(effect)
+            });
+        match parsed {
+            Ok(effect) => {
+                effects.insert(effect.name.clone(), effect);
+            }
+            Err(error) => {
+                let reason = format!("{error:#}");
+                if mode == ParticleValidationMode::Strict {
+                    bail!("particle effect {effect_name:?} is invalid: {reason}");
+                }
+                warnings.push(ParticleResourceWarning {
+                    resource_name: name.to_owned(),
+                    effect_name,
+                    reason,
+                });
+            }
         }
     }
     let (texture_width, texture_height, rgba) = decode_png_rgba(&texture)?;
@@ -693,6 +919,7 @@ pub fn load_particle_assets(path: &Path, name: &str) -> Result<ParticleAssets> {
         rgba,
         sprites,
         effects,
+        warnings,
     })
 }
 
@@ -729,27 +956,66 @@ fn validate_particle_effect(effect: &ParticleEffectData, sprite_count: usize) ->
         }
         validate_particle_expression(effect, expression.keys())?;
     }
-    for group in &effect.groups {
-        for particle in &group.particles {
+    let invalid_starts = effect
+        .groups
+        .iter()
+        .enumerate()
+        .flat_map(|(group_index, group)| {
+            group
+                .particles
+                .iter()
+                .enumerate()
+                .filter_map(move |(particle_index, particle)| {
+                    if !particle.start.is_finite() {
+                        Some(format!(
+                            "group {group_index} particle {particle_index} start is non-finite ({})",
+                            particle.start
+                        ))
+                    } else if !(0.0..=1.0).contains(&particle.start) {
+                        Some(format!(
+                            "group {group_index} particle {particle_index} start={} is outside the Sonolus [0, 1] range",
+                            particle.start
+                        ))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
+    if !invalid_starts.is_empty() {
+        bail!(
+            "particle timeline has invalid start values: {}",
+            invalid_starts.join("; ")
+        );
+    }
+    for (group_index, group) in effect.groups.iter().enumerate() {
+        for (particle_index, particle) in group.particles.iter().enumerate() {
             if particle.sprite >= sprite_count {
                 bail!(
-                    "particle effect {:?} references missing sprite {}",
-                    effect.name,
-                    particle.sprite
+                    "particle group {group_index} particle {particle_index} references missing sprite {}",
+                    particle.sprite,
                 );
             }
-            if !particle.start.is_finite()
-                || !particle.duration.is_finite()
-                || !(0.0..=1.0).contains(&particle.start)
-                || particle.duration < 0.0
-            {
+            if !particle.duration.is_finite() {
                 bail!(
-                    "particle effect {:?} has an invalid particle timeline",
-                    effect.name
+                    "particle group {group_index} particle {particle_index} duration is non-finite ({})",
+                    particle.duration
                 );
             }
-            parse_background_color(&particle.color, false)
-                .with_context(|| format!("particle effect {:?} has invalid color", effect.name))?;
+            // Keep accepting durations beyond the normalized loop interval:
+            // ParticleData may describe a particle tail that outlives its
+            // effect interval, and the runtime evaluator deliberately handles
+            // that lifecycle. `start`, in contrast, is an effect-relative
+            // spawn point and must be within the normalized interval.
+            if particle.duration < 0.0 {
+                bail!(
+                    "particle group {group_index} particle {particle_index} duration={} is negative",
+                    particle.duration
+                );
+            }
+            parse_background_color(&particle.color, false).with_context(|| {
+                format!("particle group {group_index} particle {particle_index} has invalid color")
+            })?;
             for property in [
                 &particle.x,
                 &particle.y,
@@ -765,8 +1031,7 @@ fn validate_particle_effect(effect: &ParticleEffectData, sprite_count: usize) ->
                     .any(|v| !v.is_finite())
                 {
                     bail!(
-                        "particle effect {:?} has a non-finite particle expression",
-                        effect.name
+                        "particle group {group_index} particle {particle_index} has a non-finite expression"
                     );
                 }
                 validate_particle_expression(
@@ -1487,4 +1752,108 @@ pub fn verify_scp_references(path: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(issues)
+}
+
+#[cfg(test)]
+mod particle_resource_tests {
+    use super::*;
+    use crate::{particles, runtime::ParticleEffectInstance};
+    use std::{collections::BTreeMap, path::PathBuf};
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("TestingSuite")
+            .join("proseka_official+2.scp")
+    }
+
+    #[test]
+    fn toasted_bread_skips_only_the_out_of_range_circular_hold_particles() {
+        let path = fixture();
+        let assets = load_particle_assets(&path, "toasted-bread-st").unwrap();
+        assert!(!assets.effects.contains_key("#NOTE_CIRCULAR_HOLD_GREEN"));
+
+        let warnings = assets
+            .warnings
+            .iter()
+            .filter(|warning| warning.effect_name == "#NOTE_CIRCULAR_HOLD_GREEN")
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), 1, "effect warning must be deduplicated");
+        assert!(warnings[0]
+            .reason
+            .contains("group 13 particle 3 start=1.08"));
+        assert!(warnings[0]
+            .reason
+            .contains("outside the Sonolus [0, 1] range"));
+        for location in [
+            "group 13 particle 3 start=1.08",
+            "group 13 particle 4 start=1.28",
+            "group 13 particle 7 start=1.08",
+            "group 13 particle 8 start=1.28",
+            "group 14 particle 3 start=1.07",
+            "group 14 particle 7 start=1.07",
+        ] {
+            assert!(warnings[0].reason.contains(location), "{location}");
+        }
+
+        // This package has additional invalid entries, but unrelated valid
+        // timelines and the shared atlas remain available to the renderer.
+        assert!(assets.effects.contains_key("#NOTE_CIRCULAR_TAP_GREEN"));
+        assert!(!assets.effects.is_empty());
+    }
+
+    #[test]
+    fn strict_particle_validation_reports_the_exact_effect_and_field() {
+        let error = load_particle_assets_with_mode(
+            &fixture(),
+            "toasted-bread-st",
+            ParticleValidationMode::Strict,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("#NOTE_CIRCULAR_HOLD_GREEN"), "{error}");
+        assert!(error.contains("group 13 particle 3 start=1.08"), "{error}");
+    }
+
+    #[test]
+    fn valid_toasted_bread_effects_still_produce_particle_draws() {
+        let assets = load_particle_assets(&fixture(), "toasted-bread-st").unwrap();
+        let corners = [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]];
+        let mut rendered_effects = Vec::new();
+
+        for (name, effect) in &assets.effects {
+            let Some(particle) = effect
+                .groups
+                .iter()
+                .flat_map(|group| &group.particles)
+                .find(|particle| particle.duration > 0.0)
+            else {
+                continue;
+            };
+            let time = particle.start + (particle.duration * 0.5).min(0.01);
+            let bindings = BTreeMap::from([(7, name.clone())]);
+            let instances = [ParticleEffectInstance {
+                instance_id: 1,
+                effect_id: 7,
+                corners,
+                spawned_at: 0.0,
+                duration: 1.0,
+                is_looped: false,
+            }];
+            if !particles::render_instances(&assets, &bindings, &instances, time)
+                .unwrap()
+                .is_empty()
+            {
+                rendered_effects.push(name.clone());
+                if rendered_effects.len() == 2 {
+                    break;
+                }
+            }
+        }
+
+        assert_eq!(
+            rendered_effects.len(),
+            2,
+            "only rendered {rendered_effects:?}"
+        );
+    }
 }

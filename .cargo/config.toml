@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-msvc]
+# Keep the installed application independent of a separately installed
+# Microsoft Visual C++ redistributable. Graphics drivers remain a system
+# dependency.
+rustflags = ["-C", "target-feature=+crt-static"]

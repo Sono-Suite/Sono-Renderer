@@ -1,7 +1,10 @@
 //! Opt-in, bounded AudioPrepass checkpoints; no callback or scheduling changes.
+#[cfg(test)]
 use crate::watch_runtime::{FrameReport, FrameRuntimeProfile, WatchRuntime};
 use serde::Serialize;
-use std::{collections::BTreeMap, time::Instant};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AudioPrepassCheckpoint {
@@ -31,6 +34,7 @@ pub struct AudioPrepassCheckpoint {
     pub live_particle_instances: usize,
 }
 
+#[cfg(test)]
 pub(crate) struct Checkpoints {
     start: f64,
     next: f64,
@@ -47,6 +51,7 @@ pub(crate) struct Checkpoints {
     stages: BTreeMap<String, u64>,
 }
 
+#[cfg(test)]
 impl Checkpoints {
     pub fn new() -> Self {
         Self {

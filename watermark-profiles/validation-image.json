@@ -1,0 +1,47 @@
+{
+  "enabled": true,
+  "attribution": {
+    "font_size": 18.0,
+    "opacity": 0.76,
+    "margin": 12.0
+  },
+  "moving": {
+    "enabled": true,
+    "content": {
+      "kind": "image",
+      "asset": "perfect-judgement",
+      "source": [0.0, 0.0, 1.0, 1.0]
+    },
+    "font_size": 42.0,
+    "image_height": 46.0,
+    "opacity": 0.34,
+    "scale": 1.0,
+    "rotation_degrees": -11.0,
+    "color": [255, 255, 255, 255],
+    "start": [0.48, 0.58],
+    "anchor": "center",
+    "bounds": [0.05, 0.06, 0.9, 0.84],
+    "movement": {
+      "kind": "random-waypoints",
+      "segment_seconds": 1.8,
+      "interpolation": "smooth-step"
+    },
+    "timing": {
+      "start_time": 20.0,
+      "duration": 10.0,
+      "repeat": true
+    },
+    "animation": {
+      "period_seconds": 3.6,
+      "scale_amplitude": 0.05,
+      "rotation_amplitude_degrees": 4.0,
+      "opacity_amplitude": 0.08,
+      "phase_radians": 0.4
+    },
+    "layer": "after-gameplay-ui",
+    "seed": 20261006
+  },
+  "assets": {
+    "perfect-judgement": "../assets/judge/1.png"
+  }
+}

@@ -506,6 +506,7 @@ mod tests {
                 height: 1,
             }],
             effects: [("one".into(), effect)].into(),
+            warnings: vec![],
         };
         let instance = ParticleEffectInstance {
             instance_id: 3,

@@ -1,0 +1,28 @@
+{
+  "profile_name": "Terminal / Field Monitor (4:3)",
+  "enabled": true,
+  "mode": "custom",
+  "design_size": [1440, 1080],
+  "fit": "cover",
+  "assets": {"spectrum": "../assets/rainbow.png"},
+  "elements": [
+    {"id": "left-rail", "kind": "rectangle", "layout": {"x": 0, "y": 0, "width": 0.22, "height": 1}, "color": [7, 13, 22, 238], "border": [43, 231, 184, 255], "z_index": 0},
+    {"id": "rail-light", "kind": "image", "asset": "spectrum", "layout": {"x": 0.015, "y": 0.035, "width": 0.19, "height": 0.035}, "opacity": 0.9, "z_index": 1},
+    {"id": "monitor-title", "kind": "text", "layout": {"x": 0.035, "y": 0.12, "width": 0.16, "height": 0.08}, "text": "FIELD\nMONITOR", "font_size": 34, "color": [224, 247, 245, 255], "z_index": 3},
+    {
+      "id": "left-stats-flow",
+      "kind": "container",
+      "layout": {"x": 0.035, "y": 0.31, "width": 0.16, "height": 0.3, "flow": {"direction": "column", "gap": 0.035}},
+      "z_index": 3,
+      "children": [
+        {"id": "active-label", "kind": "text", "layout": {"width": 1, "height": 0.14}, "text": "ACTIVE ENTITIES", "font_size": 16, "color": [85, 221, 193, 255]},
+        {"id": "active-count", "kind": "counter", "layout": {"width": 1, "height": 0.3}, "value": {"kind": "source", "source": {"kind": "active-entities"}}, "digits": 4, "font_size": 56, "color": [246, 250, 255, 255]},
+        {"id": "event-count", "kind": "text", "layout": {"width": 1, "height": 0.18}, "text": "EVENTS {scheduled_events}", "font_size": 20, "color": [185, 194, 208, 255]}
+      ]
+    },
+    {"id": "time-gauge-track", "kind": "gauge", "layout": {"x": 0.045, "y": 0.68, "width": 0.05, "height": 0.25}, "value": {"kind": "source", "source": {"kind": "progress"}}, "maximum": {"kind": "constant", "value": 1}, "orientation": "bottom-to-top", "fill": [255, 92, 95, 255], "track": [28, 39, 51, 255]},
+    {"id": "world-line", "kind": "rectangle", "layout": {"x": 0.3, "y": 0.12, "width": 0.62, "height": 0.006}, "rotation": -11, "color": [255, 82, 96, 255], "opacity": 0.86, "z_index": 1},
+    {"id": "time-title", "kind": "text", "layout": {"x": 0.95, "y": 0.11, "width": 0.25, "height": 0.05, "anchor": "top-right", "align": "right"}, "text": "TIMELINE / {time}s", "font_size": 20, "color": [255, 221, 220, 255], "z_index": 3},
+    {"id": "event-score", "kind": "text", "layout": {"x": 0.94, "y": 0.88, "width": 0.28, "height": 0.08, "anchor": "bottom-right", "align": "right"}, "text": "EVENT SCORE {score}", "font_size": 32, "color": [255, 92, 95, 255], "visible_when": {"kind": "greater-or-equal", "left": {"kind": "source", "source": {"kind": "score"}}, "right": {"kind": "constant", "value": 0}}}
+  ]
+}

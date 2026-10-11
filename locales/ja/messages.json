@@ -1,0 +1,16 @@
+{
+  "app.name":"Sono-Renderer","language.title":"アプリケーションの言語","language.description":"Sono-Renderer の画面表示に使う言語を選択します。プロジェクトや制作コンテンツは変更されません。","language.review_notice":"翻訳は機械翻訳の初稿であり、人による言語レビューを受けていません。",
+  "nav.home":"ホーム","nav.quick_render":"クイックレンダー","nav.chart_studio":"チャートスタジオ","nav.presentation_studio":"プレゼンテーションスタジオ","nav.production":"ジョブと履歴","nav.tools":"ツール","nav.settings":"設定","nav.diagnostics":"診断",
+  "home.title.welcome":"Sono-Renderer へようこそ","home.title.home":"Sono-Renderer ホーム","home.question":"何をしますか？","home.intro":"目的を選んでください。Sonolus のレンダリング、譜面の作成、一般的な動画編集を同じアプリで行えます。",
+  "home.render.title":"レベルをレンダリング","home.render.body":"エンジン、レベル、リソース、必要に応じて音楽を選び、MP4 を作成します。プロジェクトや詳細設定は任意です。","home.render.action":"クイックレンダーを開始",
+  "home.chart.title":"譜面を作成・編集","home.chart.body":"LevelData を開くか作成し、エンティティを編集、選択したエンジンでプレビュー、検証してエクスポートします。","home.chart.action":"チャートスタジオを開く",
+  "home.video.title":"動画を編集","home.video.body":"一般的な動画、音声、画像、タイトルを編集できます。Sonolus のデータは必要ありません。","home.video.action":"プレゼンテーションスタジオを開く",
+  "home.project.title":"プロジェクトを開く","home.project.body":"保存済みのレンダー入力プロジェクトまたは動画コンポジションを続けます。","home.project.render":"レンダープロジェクト…","home.project.video":"動画コンポジション…",
+  "home.learn.title":"使い方","home.learn.body":"このバージョンのワークフローを短いガイドで検索できます。","home.learn.action":"使い始める・ヘルプ",
+  "common.skip":"今はスキップ","common.help":"ヘルプ","common.cancel":"キャンセル","common.save":"保存","common.clear":"クリア","common.open":"開く","common.export":"エクスポート","common.undo":"元に戻す","common.redo":"やり直す","common.search":"検索","common.loading":"読み込み中…","common.saved":"保存済み","common.modified":"変更あり",
+  "quick.title":"クイックレンダー","quick.description":"Sonolus のレベルから動画を作成します。プロジェクトや詳細設定は任意です。","quick.check_inputs":"入力を確認","quick.render":"レンダリング",
+  "chart.title":"チャートスタジオ","chart.description":"譜面データを作成し、選択したエンジンでプレビュー、検証して標準 LevelData をエクスポートします。","chart.generic_mode":"汎用 / 生データ編集モード","chart.raw_notice":"フィールド名はデータパスとして表示されます。ゲーム上の意味、タイミング、配置、関連性を推測しません。","chart.inspect_engine":"選択したエンジンを調査","chart.export_level":"LevelData をエクスポート",
+  "presentation.title":"プレゼンテーションスタジオ","presentation.description":"エンジン、LevelData、Watch、Sono-GCC を読み込まずに一般的なメディアを編集できます。","presentation.media":"メディア","presentation.timeline":"タイムライン","presentation.inspector":"インスペクター","presentation.export":"動画をエクスポート",
+  "settings.title":"設定","settings.language":"言語","settings.translation_review":"翻訳レビュー状況","help.title":"使い始める・ヘルプ",
+  "command.app.home":"ホーム","command.workspace.quick_render":"レベルをレンダリング","command.workspace.chart_studio":"譜面を作成・編集","command.workspace.presentation_studio":"動画を編集","command.app.production":"ジョブと履歴","command.app.tools":"ツールと分析","command.app.settings":"設定","command.app.diagnostics":"診断"
+}

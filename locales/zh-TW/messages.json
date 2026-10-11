@@ -1,0 +1,16 @@
+{
+  "app.name":"Sono-Renderer","language.title":"應用程式語言","language.description":"選擇 Sono-Renderer 介面使用的語言。此操作不會變更專案或創作內容。","language.review_notice":"譯文為機器起草，尚未經過人工語言審校。",
+  "nav.home":"首頁","nav.quick_render":"快速算圖","nav.chart_studio":"譜面工作室","nav.presentation_studio":"影片工作室","nav.production":"工作與歷史紀錄","nav.tools":"工具","nav.settings":"設定","nav.diagnostics":"診斷",
+  "home.title.welcome":"歡迎使用 Sono-Renderer","home.title.home":"Sono-Renderer 首頁","home.question":"您想要做什麼？","home.intro":"選擇一個目標。此應用程式支援 Sonolus 算圖、譜面製作及獨立影片編輯。",
+  "home.render.title":"算繪關卡","home.render.body":"選擇引擎、關卡、資源及選用音樂，接著製作 MP4。專案檔案與進階設定皆為選用。","home.render.action":"開始快速算圖",
+  "home.chart.title":"建立／編輯譜面","home.chart.body":"開啟或建立 LevelData、編輯實體、使用所選引擎預覽、驗證並匯出。","home.chart.action":"開啟譜面工作室",
+  "home.video.title":"編輯影片","home.video.body":"編輯一般影片、音訊、影像與標題。不需要 Sonolus 內容。","home.video.action":"開啟影片工作室",
+  "home.project.title":"開啟專案","home.project.body":"繼續處理已儲存的算圖輸入專案或影片合成專案。","home.project.render":"算圖專案…","home.project.video":"影片合成…",
+  "home.learn.title":"學習","home.learn.body":"搜尋此版本工作流程的簡短指南。","home.learn.action":"開始使用與說明",
+  "common.skip":"暫時略過","common.help":"說明","common.cancel":"取消","common.save":"儲存","common.clear":"清除","common.open":"開啟","common.export":"匯出","common.undo":"復原","common.redo":"重做","common.search":"搜尋","common.loading":"載入中…","common.saved":"已儲存","common.modified":"已修改",
+  "quick.title":"快速算圖","quick.description":"從 Sonolus 關卡製作影片。專案檔案與進階設定皆為選用。","quick.check_inputs":"檢查輸入","quick.render":"開始算圖",
+  "chart.title":"譜面工作室","chart.description":"製作譜面資料，使用所選引擎預覽、驗證並匯出標準 LevelData。","chart.generic_mode":"通用／原始資料編輯模式","chart.raw_notice":"欄位名稱以資料路徑顯示。工作室不會猜測玩法意義、時間、版面或實體關係。","chart.inspect_engine":"檢查所選引擎","chart.export_level":"匯出 LevelData",
+  "presentation.title":"影片工作室","presentation.description":"無須載入引擎、LevelData、Watch 或 Sono-GCC，即可編輯一般媒體。","presentation.media":"媒體","presentation.timeline":"時間軸","presentation.inspector":"檢視器","presentation.export":"匯出影片",
+  "settings.title":"設定","settings.language":"語言","settings.translation_review":"翻譯審校狀態","help.title":"開始使用與說明",
+  "command.app.home":"首頁","command.workspace.quick_render":"算繪關卡","command.workspace.chart_studio":"建立或編輯譜面","command.workspace.presentation_studio":"編輯影片","command.app.production":"工作與歷史紀錄","command.app.tools":"工具與分析","command.app.settings":"設定","command.app.diagnostics":"診斷"
+}

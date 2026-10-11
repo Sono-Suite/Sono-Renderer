@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Resources,
     [int] $Runs = 5,
     [double] $Time = 1.0,
+    [switch] $NoVmAccounting,
     [string] $Renderer = "target/release/renderer.exe",
     [string] $OutputDirectory = "artifacts/sono-gcc-performance"
 )
@@ -23,9 +24,17 @@ foreach ($mode in @("interpreter", "sono-gcc")) {
     for ($run = 1; $run -le $Runs; $run++) {
         $logPath = Join-Path $outputPath "$Name-$mode-$run.log"
         $watch = [System.Diagnostics.Stopwatch]::StartNew()
-        $lines = & $rendererPath run-watch $enginePath $levelPath `
-            --resources $resourcesPath --time $Time --vm $mode `
-            --no-ui --no-particles --no-sfx --no-bgm 2>&1
+        $arguments = @(
+            "run-watch", $enginePath, $levelPath,
+            "--resources", $resourcesPath,
+            "--time", "$Time",
+            "--vm", $mode,
+            "--no-ui", "--no-particles", "--no-sfx", "--no-bgm"
+        )
+        if ($NoVmAccounting) {
+            $arguments += "--no-vm-accounting"
+        }
+        $lines = & $rendererPath @arguments 2>&1
         $exitCode = $LASTEXITCODE
         $watch.Stop()
         $text = ($lines | ForEach-Object { "$_" }) -join [Environment]::NewLine

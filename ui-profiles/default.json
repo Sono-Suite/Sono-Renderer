@@ -1,0 +1,1540 @@
+{
+    "profile_name":  "Asset-backed Gameplay HUD",
+    "enabled":  true,
+    "scoring":  {
+                    "source":  "sono-overlay",
+                    "initial_score":  0.0,
+                    "initial_combo":  0,
+                    "initial_life":  1000.0,
+                    "minimum_life":  0.0,
+                    "maximum_life":  1000.0,
+                    "rules":  [],
+                    "forecast":  {
+                                     "team_power":  250000.0,
+                                     "level_rating":  null,
+                                     "score_mode":  "standard",
+                                     "all_flick":  false,
+                                     "chart_skills_enabled":  true,
+                                     "judgment":  "PERFECT",
+                                     "initial_life":  1000.0,
+                                     "minimum_life":  0.0,
+                                     "maximum_life":  1000.0
+                                 }
+                },
+    "mode":  "custom",
+    "design_size":  [
+                        1920,
+                        1080
+                    ],
+    "fit":  "contain",
+    "assets":  {
+                   "score-panel":  "pack://score.bg",
+                   "score-bar":  "pack://score.bar",
+                   "score-markers":  "pack://score.fg",
+                   "score-plus":  "pack://score.digit.+",
+                   "score-plus-shadow":  "pack://score.digit.s+",
+                   "rank-c":  "pack://score.rank.chr.c",
+                   "rank-b":  "pack://score.rank.chr.b",
+                   "rank-a":  "pack://score.rank.chr.a",
+                   "rank-s":  "pack://score.rank.chr.s",
+                   "rank-d":  "pack://score.rank.chr.d",
+                   "rank-label-c":  "pack://score.rank.txt.en.c",
+                   "rank-label-b":  "pack://score.rank.txt.en.b",
+                   "rank-label-a":  "pack://score.rank.txt.en.a",
+                   "rank-label-s":  "pack://score.rank.txt.en.s",
+                   "rank-label-d":  "pack://score.rank.txt.en.d",
+                   "life-panel":  "pack://life.bg",
+                   "life-fill":  "pack://life.normal",
+                   "life-mask":  "pack://life.mask",
+                   "life-danger":  "pack://life.danger",
+                   "life-overflow":  "pack://life.overflow",
+                   "combo-glow":  "pack://combo.pe",
+                   "combo-title":  "pack://combo.pt",
+                   "judge-perfect":  "pack://judge.1",
+                   "judge-great":  "pack://judge.2",
+                   "judge-good":  "pack://judge.3",
+                   "judge-bad":  "pack://judge.4",
+                   "judge-miss":  "pack://judge.5",
+                   "judge-auto":  "pack://judge.6",
+                   "score-digit-0":  "pack://score.digit.0",
+                   "score-digit-1":  "pack://score.digit.1",
+                   "score-digit-2":  "pack://score.digit.2",
+                   "score-digit-3":  "pack://score.digit.3",
+                   "score-digit-4":  "pack://score.digit.4",
+                   "score-digit-5":  "pack://score.digit.5",
+                   "score-digit-6":  "pack://score.digit.6",
+                   "score-digit-7":  "pack://score.digit.7",
+                   "score-digit-8":  "pack://score.digit.8",
+                   "score-digit-9":  "pack://score.digit.9",
+                   "score-shadow-0":  "pack://score.digit.s0",
+                   "score-shadow-1":  "pack://score.digit.s1",
+                   "score-shadow-2":  "pack://score.digit.s2",
+                   "score-shadow-3":  "pack://score.digit.s3",
+                   "score-shadow-4":  "pack://score.digit.s4",
+                   "score-shadow-5":  "pack://score.digit.s5",
+                   "score-shadow-6":  "pack://score.digit.s6",
+                   "score-shadow-7":  "pack://score.digit.s7",
+                   "score-shadow-8":  "pack://score.digit.s8",
+                   "score-shadow-9":  "pack://score.digit.s9",
+                   "life-digit-0":  "pack://life.digit.0",
+                   "life-digit-1":  "pack://life.digit.1",
+                   "life-digit-2":  "pack://life.digit.2",
+                   "life-digit-3":  "pack://life.digit.3",
+                   "life-digit-4":  "pack://life.digit.4",
+                   "life-digit-5":  "pack://life.digit.5",
+                   "life-digit-6":  "pack://life.digit.6",
+                   "life-digit-7":  "pack://life.digit.7",
+                   "life-digit-8":  "pack://life.digit.8",
+                   "life-digit-9":  "pack://life.digit.9",
+                   "life-shadow-0":  "pack://life.digit.s0",
+                   "life-shadow-1":  "pack://life.digit.s1",
+                   "life-shadow-2":  "pack://life.digit.s2",
+                   "life-shadow-3":  "pack://life.digit.s3",
+                   "life-shadow-4":  "pack://life.digit.s4",
+                   "life-shadow-5":  "pack://life.digit.s5",
+                   "life-shadow-6":  "pack://life.digit.s6",
+                   "life-shadow-7":  "pack://life.digit.s7",
+                   "life-shadow-8":  "pack://life.digit.s8",
+                   "life-shadow-9":  "pack://life.digit.s9",
+                   "combo-digit-0":  "pack://combo.p0",
+                   "combo-digit-1":  "pack://combo.p1",
+                   "combo-digit-2":  "pack://combo.p2",
+                   "combo-digit-3":  "pack://combo.p3",
+                   "combo-digit-4":  "pack://combo.p4",
+                   "combo-digit-5":  "pack://combo.p5",
+                   "combo-digit-6":  "pack://combo.p6",
+                   "combo-digit-7":  "pack://combo.p7",
+                   "combo-digit-8":  "pack://combo.p8",
+                   "combo-digit-9":  "pack://combo.p9",
+                   "combo-burst-0":  "pack://combo.b0",
+                   "combo-burst-1":  "pack://combo.b1",
+                   "combo-burst-2":  "pack://combo.b2",
+                   "combo-burst-3":  "pack://combo.b3",
+                   "combo-burst-4":  "pack://combo.b4",
+                   "combo-burst-5":  "pack://combo.b5",
+                   "combo-burst-6":  "pack://combo.b6",
+                   "combo-burst-7":  "pack://combo.b7",
+                   "combo-burst-8":  "pack://combo.b8",
+                   "combo-burst-9":  "pack://combo.b9"
+               },
+    "fonts":  {
+                  "score":  {
+                                "glyph_width":  33,
+                                "glyph_height":  44,
+                                "columns":  1,
+                                "advance":  1.0,
+                                "glyph_assets":  {
+                                                     "0":  "score-digit-0",
+                                                     "1":  "score-digit-1",
+                                                     "2":  "score-digit-2",
+                                                     "3":  "score-digit-3",
+                                                     "4":  "score-digit-4",
+                                                     "5":  "score-digit-5",
+                                                     "6":  "score-digit-6",
+                                                     "7":  "score-digit-7",
+                                                     "8":  "score-digit-8",
+                                                     "9":  "score-digit-9"
+                                                 }
+                            },
+                  "score-shadow":  {
+                                       "glyph_width":  33,
+                                       "glyph_height":  44,
+                                       "columns":  1,
+                                       "advance":  1.0,
+                                       "glyph_assets":  {
+                                                            "0":  "score-shadow-0",
+                                                            "1":  "score-shadow-1",
+                                                            "2":  "score-shadow-2",
+                                                            "3":  "score-shadow-3",
+                                                            "4":  "score-shadow-4",
+                                                            "5":  "score-shadow-5",
+                                                            "6":  "score-shadow-6",
+                                                            "7":  "score-shadow-7",
+                                                            "8":  "score-shadow-8",
+                                                            "9":  "score-shadow-9"
+                                                        }
+                                   },
+                  "life":  {
+                               "glyph_width":  1000,
+                               "glyph_height":  1333,
+                               "columns":  1,
+                               "advance":  0.9,
+                               "glyph_assets":  {
+                                                    "0":  "life-digit-0",
+                                                    "1":  "life-digit-1",
+                                                    "2":  "life-digit-2",
+                                                    "3":  "life-digit-3",
+                                                    "4":  "life-digit-4",
+                                                    "5":  "life-digit-5",
+                                                    "6":  "life-digit-6",
+                                                    "7":  "life-digit-7",
+                                                    "8":  "life-digit-8",
+                                                    "9":  "life-digit-9"
+                                                }
+                           },
+                  "life-shadow":  {
+                                      "glyph_width":  1000,
+                                      "glyph_height":  1333,
+                                      "columns":  1,
+                                      "advance":  1.0,
+                                      "glyph_assets":  {
+                                                           "0":  "life-shadow-0",
+                                                           "1":  "life-shadow-1",
+                                                           "2":  "life-shadow-2",
+                                                           "3":  "life-shadow-3",
+                                                           "4":  "life-shadow-4",
+                                                           "5":  "life-shadow-5",
+                                                           "6":  "life-shadow-6",
+                                                           "7":  "life-shadow-7",
+                                                           "8":  "life-shadow-8",
+                                                           "9":  "life-shadow-9"
+                                                       }
+                                  },
+                  "combo":  {
+                                "glyph_width":  118,
+                                "glyph_height":  150,
+                                "columns":  1,
+                                "advance":  0.8,
+                                "glyph_assets":  {
+                                                     "0":  "combo-digit-0",
+                                                     "1":  "combo-digit-1",
+                                                     "2":  "combo-digit-2",
+                                                     "3":  "combo-digit-3",
+                                                     "4":  "combo-digit-4",
+                                                     "5":  "combo-digit-5",
+                                                     "6":  "combo-digit-6",
+                                                     "7":  "combo-digit-7",
+                                                     "8":  "combo-digit-8",
+                                                     "9":  "combo-digit-9"
+                                                 }
+                            },
+                  "combo-burst":  {
+                                      "glyph_width":  118,
+                                      "glyph_height":  150,
+                                      "columns":  1,
+                                      "advance":  0.8,
+                                      "glyph_assets":  {
+                                                           "0":  "combo-burst-0",
+                                                           "1":  "combo-burst-1",
+                                                           "2":  "combo-burst-2",
+                                                           "3":  "combo-burst-3",
+                                                           "4":  "combo-burst-4",
+                                                           "5":  "combo-burst-5",
+                                                           "6":  "combo-burst-6",
+                                                           "7":  "combo-burst-7",
+                                                           "8":  "combo-burst-8",
+                                                           "9":  "combo-burst-9"
+                                                       }
+                                  }
+              },
+    "elements":  [
+                     {
+                         "id":  "score-panel",
+                         "kind":  "image",
+                         "asset":  "score-panel",
+                         "layout":  {
+                                        "x":  0.02,
+                                        "y":  0.0,
+                                        "width":  0.345,
+                                        "height":  0.1322
+                                    }
+                     },
+                     {
+                         "id":  "score-fill",
+                         "kind":  "gauge",
+                         "layout":  {
+                                        "x":  0.0815,
+                                        "y":  0.051,
+                                        "width":  0.274,
+                                        "height":  0.0225
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "score-progress"
+                                                  }
+                                   },
+                         "maximum":  {
+                                         "kind":  "constant",
+                                         "value":  1.0
+                                     },
+                         "fill":  [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                  ],
+                         "track":  [
+                                       0,
+                                       0,
+                                       0,
+                                       0
+                                   ],
+                         "fill_asset":  "score-bar"
+                     },
+                     {
+                         "id":  "score-markers",
+                         "kind":  "image",
+                         "asset":  "score-markers",
+                         "layout":  {
+                                        "x":  0.02,
+                                        "y":  0.0,
+                                        "width":  0.345,
+                                        "height":  0.1322
+                                    }
+                     },
+                     {
+                         "id":  "rank-letter",
+                         "kind":  "image",
+                         "asset":  "rank-c",
+                         "layout":  {
+                                        "x":  0.0285,
+                                        "y":  0.017,
+                                        "width":  0.036,
+                                        "height":  0.076
+                                    },
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "gameplay-variable",
+                                                                          "name":  "rank_code"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  0
+                                                        }
+                                          },
+                         "style_rules":  [
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  1
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-c"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  2
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-b"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  3
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-a"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  4
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-s"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  5
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-d"
+                                             }
+                                         ]
+                     },
+                     {
+                         "id":  "score-rank-label",
+                         "kind":  "image",
+                         "asset":  "rank-label-c",
+                         "layout":  {
+                                        "x":  0.0255,
+                                        "y":  0.108,
+                                        "width":  0.047,
+                                        "height":  0.012
+                                    },
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "gameplay-variable",
+                                                                          "name":  "rank_code"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  0
+                                                        }
+                                          },
+                         "style_rules":  [
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  1
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-label-c"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  2
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-label-b"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  3
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-label-a"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  4
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-label-s"
+                                             },
+                                             {
+                                                 "when":  {
+                                                              "kind":  "equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "gameplay-variable",
+                                                                                          "name":  "rank_code"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  5
+                                                                        }
+                                                          },
+                                                 "asset":  "rank-label-d"
+                                             }
+                                         ]
+                     },
+                     {
+                         "id":  "score-shadow",
+                         "kind":  "counter",
+                         "layout":  {
+                                        "x":  0.087,
+                                        "y":  0.077,
+                                        "width":  0.2,
+                                        "height":  0.052
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "score"
+                                                  }
+                                   },
+                         "digits":  8,
+                         "font":  "score-shadow",
+                         "font_size":  44,
+                         "align":  "left",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ]
+                     },
+                     {
+                         "id":  "score-value",
+                         "kind":  "counter",
+                         "z_index":  1,
+                         "layout":  {
+                                        "x":  0.085,
+                                        "y":  0.075,
+                                        "width":  0.2,
+                                        "height":  0.052
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "score"
+                                                  }
+                                   },
+                         "digits":  8,
+                         "font":  "score",
+                         "font_size":  44,
+                         "align":  "left",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ]
+                     },
+                     {
+                         "id":  "score-bonus-sign-shadow",
+                         "kind":  "image",
+                         "asset":  "score-plus-shadow",
+                         "layout":  {
+                                        "x":  0.229,
+                                        "y":  0.101,
+                                        "width":  0.01,
+                                        "height":  0.022
+                                    },
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "greater",
+                                                                     "left":  {
+                                                                                  "kind":  "source",
+                                                                                  "source":  {
+                                                                                                 "kind":  "gameplay-variable",
+                                                                                                 "name":  "score_bonus"
+                                                                                             }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  0
+                                                                               }
+                                                                 },
+                                                                 {
+                                                                     "kind":  "less",
+                                                                     "left":  {
+                                                                                  "kind":  "subtract",
+                                                                                  "left":  {
+                                                                                               "kind":  "source",
+                                                                                               "source":  {
+                                                                                                              "kind":  "time"
+                                                                                                          }
+                                                                                           },
+                                                                                  "right":  {
+                                                                                                "kind":  "source",
+                                                                                                "source":  {
+                                                                                                               "kind":  "latest-event-time"
+                                                                                                           }
+                                                                                            }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  1.0
+                                                                               }
+                                                                 }
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  1.0,
+                                                "to":  0.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            },
+                                            {
+                                                "property":  "offset-y",
+                                                "from":  0.0,
+                                                "to":  -15.5,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "score-bonus-sign",
+                         "kind":  "image",
+                         "z_index":  1,
+                         "asset":  "score-plus",
+                         "layout":  {
+                                        "x":  0.227,
+                                        "y":  0.099,
+                                        "width":  0.01,
+                                        "height":  0.022
+                                    },
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "greater",
+                                                                     "left":  {
+                                                                                  "kind":  "source",
+                                                                                  "source":  {
+                                                                                                 "kind":  "gameplay-variable",
+                                                                                                 "name":  "score_bonus"
+                                                                                             }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  0
+                                                                               }
+                                                                 },
+                                                                 {
+                                                                     "kind":  "less",
+                                                                     "left":  {
+                                                                                  "kind":  "subtract",
+                                                                                  "left":  {
+                                                                                               "kind":  "source",
+                                                                                               "source":  {
+                                                                                                              "kind":  "time"
+                                                                                                          }
+                                                                                           },
+                                                                                  "right":  {
+                                                                                                "kind":  "source",
+                                                                                                "source":  {
+                                                                                                               "kind":  "latest-event-time"
+                                                                                                           }
+                                                                                            }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  1.0
+                                                                               }
+                                                                 }
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  1.0,
+                                                "to":  0.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            },
+                                            {
+                                                "property":  "offset-y",
+                                                "from":  0.0,
+                                                "to":  -15.5,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "score-bonus",
+                         "kind":  "counter",
+                         "layout":  {
+                                        "x":  0.245,
+                                        "y":  0.098,
+                                        "width":  0.075,
+                                        "height":  0.04
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "gameplay-variable",
+                                                      "name":  "score_bonus"
+                                                  }
+                                   },
+                         "digits":  3,
+                         "font":  "score",
+                         "font_size":  26,
+                         "align":  "left",
+                         "color":  [
+                                       171,
+                                       177,
+                                       190,
+                                       255
+                                   ],
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "greater",
+                                                                     "left":  {
+                                                                                  "kind":  "source",
+                                                                                  "source":  {
+                                                                                                 "kind":  "gameplay-variable",
+                                                                                                 "name":  "score_bonus"
+                                                                                             }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  0
+                                                                               }
+                                                                 },
+                                                                 {
+                                                                     "kind":  "less",
+                                                                     "left":  {
+                                                                                  "kind":  "subtract",
+                                                                                  "left":  {
+                                                                                               "kind":  "source",
+                                                                                               "source":  {
+                                                                                                              "kind":  "time"
+                                                                                                          }
+                                                                                           },
+                                                                                  "right":  {
+                                                                                                "kind":  "source",
+                                                                                                "source":  {
+                                                                                                               "kind":  "latest-event-time"
+                                                                                                           }
+                                                                                            }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  1.0
+                                                                               }
+                                                                 }
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  1.0,
+                                                "to":  0.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            },
+                                            {
+                                                "property":  "offset-y",
+                                                "from":  0.0,
+                                                "to":  -15.5,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  1.0,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "life-panel",
+                         "kind":  "image",
+                         "asset":  "life-panel",
+                         "layout":  {
+                                        "x":  0.755,
+                                        "y":  0.0,
+                                        "width":  0.225,
+                                        "height":  0.09375
+                                    }
+                     },
+                     {
+                         "id":  "life-gauge",
+                         "kind":  "gauge",
+                         "layout":  {
+                                        "x":  0.788,
+                                        "y":  0.04375,
+                                        "width":  0.135,
+                                        "height":  0.013125
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "life"
+                                                  }
+                                   },
+                         "maximum":  {
+                                         "kind":  "constant",
+                                         "value":  1000
+                                     },
+                         "fill":  [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                  ],
+                         "track":  [
+                                       0,
+                                       0,
+                                       0,
+                                       0
+                                   ],
+                         "fill_asset":  "life-fill",
+                         "fill_source":  [
+                                             0.146875,
+                                             0.4666667,
+                                             0.6,
+                                             0.14
+                                         ],
+                         "mask_asset":  "life-mask",
+                         "style_rules":  [
+                                             {
+                                                 "when":  {
+                                                              "kind":  "less-or-equal",
+                                                              "left":  {
+                                                                           "kind":  "source",
+                                                                           "source":  {
+                                                                                          "kind":  "life"
+                                                                                      }
+                                                                       },
+                                                              "right":  {
+                                                                            "kind":  "constant",
+                                                                            "value":  200
+                                                                        }
+                                                          },
+                                                 "asset":  "life-danger"
+                                             }
+                                         ]
+                     },
+                     {
+                         "id":  "life-overflow-gauge",
+                         "kind":  "gauge",
+                         "layout":  {
+                                        "x":  0.788,
+                                        "y":  0.04375,
+                                        "width":  0.135,
+                                        "height":  0.013125
+                                    },
+                         "value":  {
+                                       "kind":  "subtract",
+                                       "left":  {
+                                                    "kind":  "source",
+                                                    "source":  {
+                                                                   "kind":  "life"
+                                                               }
+                                                },
+                                       "right":  {
+                                                     "kind":  "constant",
+                                                     "value":  1000
+                                                 }
+                                   },
+                         "maximum":  {
+                                         "kind":  "constant",
+                                         "value":  200
+                                     },
+                         "fill":  [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                  ],
+                         "track":  [
+                                       0,
+                                       0,
+                                       0,
+                                       0
+                                   ],
+                         "fill_asset":  "life-overflow",
+                         "fill_source":  [
+                                             0.146875,
+                                             0.4666667,
+                                             0.6,
+                                             0.14
+                                         ],
+                         "mask_asset":  "life-mask",
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "life"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  1000
+                                                        }
+                                          }
+                     },
+                     {
+                         "id":  "life-value-shadow",
+                         "kind":  "counter",
+                         "layout":  {
+                                        "x":  0.927,
+                                        "y":  0.013,
+                                        "width":  0.073,
+                                        "height":  0.047,
+                                        "anchor":  "top-right"
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "life"
+                                                  }
+                                   },
+                         "digits":  0,
+                         "font":  "life-shadow",
+                         "font_size":  34,
+                         "align":  "right",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ]
+                     },
+                     {
+                         "id":  "life-value",
+                         "kind":  "counter",
+                         "z_index":  1,
+                         "layout":  {
+                                        "x":  0.925,
+                                        "y":  0.01,
+                                        "width":  0.073,
+                                        "height":  0.047,
+                                        "anchor":  "top-right"
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "life"
+                                                  }
+                                   },
+                         "digits":  0,
+                         "font":  "life",
+                         "font_size":  34,
+                         "align":  "right",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ]
+                     },
+                     {
+                         "id":  "combo-glow",
+                         "kind":  "image",
+                         "asset":  "combo-glow",
+                         "layout":  {
+                                        "x":  0.85,
+                                        "y":  0.35,
+                                        "width":  0.086,
+                                        "height":  0.062,
+                                        "anchor":  "center"
+                                    },
+                         "opacity":  0.7,
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "combo"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  0
+                                                        }
+                                          }
+                     },
+                     {
+                         "id":  "combo-title",
+                         "kind":  "image",
+                         "z_index":  1,
+                         "asset":  "combo-title",
+                         "layout":  {
+                                        "x":  0.85,
+                                        "y":  0.35,
+                                        "width":  0.073,
+                                        "height":  0.043,
+                                        "anchor":  "center"
+                                    },
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "combo"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  0
+                                                        }
+                                          }
+                     },
+                     {
+                         "id":  "combo-special-burst",
+                         "kind":  "counter",
+                         "layout":  {
+                                        "x":  0.85,
+                                        "y":  0.445,
+                                        "width":  0.18,
+                                        "height":  0.13,
+                                        "anchor":  "center"
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "combo"
+                                                  }
+                                   },
+                         "font":  "combo-burst",
+                         "font_size":  110,
+                         "align":  "center",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ],
+                         "opacity":  0.45,
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "greater",
+                                                                     "left":  {
+                                                                                  "kind":  "source",
+                                                                                  "source":  {
+                                                                                                 "kind":  "combo"
+                                                                                             }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  0
+                                                                               }
+                                                                 },
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "note-type",
+                                                                     "value":  "special"
+                                                                 },
+                                                                 {
+                                                                     "kind":  "less",
+                                                                     "left":  {
+                                                                                  "kind":  "subtract",
+                                                                                  "left":  {
+                                                                                               "kind":  "source",
+                                                                                               "source":  {
+                                                                                                              "kind":  "time"
+                                                                                                          }
+                                                                                           },
+                                                                                  "right":  {
+                                                                                                "kind":  "source",
+                                                                                                "source":  {
+                                                                                                               "kind":  "latest-event-time"
+                                                                                                           }
+                                                                                            }
+                                                                              },
+                                                                     "right":  {
+                                                                                   "kind":  "constant",
+                                                                                   "value":  0.467
+                                                                               }
+                                                                 }
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.7,
+                                                "to":  0.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            },
+                                            {
+                                                "property":  "scale-x",
+                                                "from":  1.75,
+                                                "to":  1.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            },
+                                            {
+                                                "property":  "scale-y",
+                                                "from":  1.75,
+                                                "to":  1.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "ease-out"
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "combo-value",
+                         "kind":  "counter",
+                         "z_index":  1,
+                         "layout":  {
+                                        "x":  0.85,
+                                        "y":  0.445,
+                                        "width":  0.18,
+                                        "height":  0.13,
+                                        "anchor":  "center"
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "combo"
+                                                  }
+                                   },
+                         "font":  "combo",
+                         "font_size":  110,
+                         "align":  "center",
+                         "color":  [
+                                       255,
+                                       255,
+                                       255,
+                                       255
+                                   ],
+                         "visible_when":  {
+                                              "kind":  "greater",
+                                              "left":  {
+                                                           "kind":  "source",
+                                                           "source":  {
+                                                                          "kind":  "combo"
+                                                                      }
+                                                       },
+                                              "right":  {
+                                                            "kind":  "constant",
+                                                            "value":  0
+                                                        }
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "scale-x",
+                                                "from":  0.5,
+                                                "to":  1.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  0.267,
+                                                "repeat":  false,
+                                                 "easing":  "linear",
+                                                 "value_from_state":  {
+                                                                          "kind":  "source",
+                                                                          "source":  {"kind": "gameplay-variable", "name": "combo_pop_scale"}
+                                                                      }
+                                            },
+                                            {
+                                                "property":  "scale-y",
+                                                "from":  0.5,
+                                                "to":  1.0,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "latest-event-time"
+                                                               },
+                                                "duration":  0.267,
+                                                "repeat":  false,
+                                                 "easing":  "linear",
+                                                 "value_from_state":  {
+                                                                          "kind":  "source",
+                                                                          "source":  {"kind": "gameplay-variable", "name": "combo_pop_scale"}
+                                                                      }
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "combo-event-pulse",
+                         "kind":  "counter",
+                         "z_index":  0,
+                         "layout":  {
+                                        "x":  0.85,
+                                        "y":  0.445,
+                                        "width":  0.18,
+                                        "height":  0.13,
+                                        "anchor":  "center"
+                                    },
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {
+                                                      "kind":  "combo"
+                                                  }
+                                   },
+                         "font":  "combo-burst",
+                         "font_size":  110,
+                         "align":  "center",
+                         "color":  [255, 255, 255, 255],
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "greater",
+                                                                     "left":  {"kind": "source", "source": {"kind": "combo"}},
+                                                                     "right":  {"kind": "constant", "value": 0}
+                                                                 },
+                                                                 {
+                                                                     "kind":  "truthy",
+                                                                     "value":  {"kind": "source", "source": {"kind": "gameplay-variable", "name": "combo_pulse_visible"}}
+                                                                 }
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "scale-x",
+                                                "from":  0.5,
+                                                "to":  1.375,
+                                                "start":  0,
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "linear",
+                                                "value_from_state":  {
+                                                                         "kind":  "source",
+                                                                         "source":  {"kind": "gameplay-variable", "name": "combo_pulse_scale"}
+                                                                     }
+                                            },
+                                            {
+                                                "property":  "scale-y",
+                                                "from":  0.5,
+                                                "to":  1.375,
+                                                "start":  0,
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "linear",
+                                                "value_from_state":  {
+                                                                         "kind":  "source",
+                                                                         "source":  {"kind": "gameplay-variable", "name": "combo_pulse_scale"}
+                                                                     }
+                                            },
+                                            {
+                                                "property":  "opacity",
+                                                "from":  1.0,
+                                                "to":  0.0,
+                                                "start":  0,
+                                                "duration":  0.467,
+                                                "repeat":  false,
+                                                "easing":  "linear",
+                                                "value_from_state":  {
+                                                                         "kind":  "source",
+                                                                         "source":  {"kind": "gameplay-variable", "name": "combo_pulse_opacity"}
+                                                                     }
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-perfect",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.15,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-perfect",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "PERFECT"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-great",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.15,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-great",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "GREAT"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-good",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.15,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-good",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "GOOD"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-bad",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.15,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-bad",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "BAD"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-miss",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.0875,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-miss",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "MISS"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     },
+                     {
+                         "id":  "judgement-auto",
+                         "kind":  "image",
+                         "layout":  {
+                                        "x":  0.5,
+                                        "y":  0.62,
+                                        "width":  0.15,
+                                        "height":  0.0697,
+                                        "anchor":  "center"
+                                    },
+                         "asset":  "judge-auto",
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {
+                                                                     "kind":  "string-equals",
+                                                                     "source":  "judgment",
+                                                                     "value":  "AUTO"
+                                                                 },
+                                                                 {"kind":"truthy","value":{"kind":"source","source":{"kind":"gameplay-variable","name":"judgment_visible"}}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {
+                                                "property":  "opacity",
+                                                "from":  0.0,
+                                                "to":  0.667,
+                                                "start":  0,
+                                                "start_from":  {
+                                                                   "kind":  "judgment-time"
+                                                               },
+                                                "duration":  0.1,
+                                                "repeat":  false,
+                                                "easing":  "linear", "value_from_state": {"kind": "source", "source": {"kind": "gameplay-variable", "name": "judgment_opacity"}}
+                                            }
+                                        ]
+                     }
+                 ],
+    "asset_pack":  "../assets/presentation-pack.json",
+    "timeline":  {
+                     "tracks":  [
+
+                                ]
+                 }
+}

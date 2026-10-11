@@ -128,6 +128,7 @@ fn z_tuple_order_matches_reported_progressive_sonolus_observations() {
                     corners: quad,
                     z: red_z,
                     alpha: 1.0,
+                    source_uv: [0.0, 0.0, 1.0, 1.0],
                     provenance: None,
                     trace: None,
                 },
@@ -136,6 +137,7 @@ fn z_tuple_order_matches_reported_progressive_sonolus_observations() {
                     corners: quad,
                     z: green_z,
                     alpha: 1.0,
+                    source_uv: [0.0, 0.0, 1.0, 1.0],
                     provenance: None,
                     trace: None,
                 },
@@ -238,6 +240,7 @@ fn z_tuple_exact_ties_preserve_stable_draw_submission_order() {
                 corners: [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
                 z: [1.0, 2.0, 3.0, 4.0],
                 alpha: 1.0,
+                source_uv: [0.0, 0.0, 1.0, 1.0],
                 provenance: None,
                 trace: None,
             })
@@ -419,11 +422,20 @@ fn supplied_reference_fixtures_load() {
     let report = renderer::compatibility::analyze(&engine, &scp, &level).unwrap();
     assert!(report.level_entity_count > 0);
     assert!(!report.level_archetypes.is_empty());
+    let vm_assessment = report
+        .assessments
+        .iter()
+        .find(|assessment| assessment.category == "Watch VM")
+        .expect("Watch VM assessment");
+    assert_eq!(
+        vm_assessment.status,
+        renderer::compatibility::CompatibilityStatus::Supported
+    );
     assert!(report
         .engine
         .support
         .vm_runtime
-        .contains("partial Watch VM"));
+        .contains("reported per function"));
     assert!(report.resource_integrity_issues.is_empty());
 }
 
@@ -1067,6 +1079,83 @@ fn watch_draw_negative_two_keeps_existing_rejection() {
 }
 
 #[test]
+fn watch_curved_draw_emits_tessellated_patches_with_source_uvs() {
+    use renderer::watch::EngineNode as N;
+    let nodes: Vec<N> = serde_json::from_value(serde_json::json!([
+        {"value":0},
+        {"value":0}, {"value":0}, {"value":0}, {"value":1},
+        {"value":1}, {"value":1}, {"value":1}, {"value":0},
+        {"value":0}, {"value":1}, {"value":2}, {"value":0}, {"value":1},
+        {"func":"DrawCurvedB","args":[0,1,2,3,4,5,6,7,8,9,10,11,12,13]}
+    ]))
+    .unwrap();
+    let mut vm = renderer::runtime::WatchVm::new(&nodes);
+
+    assert_eq!(vm.execute(14).unwrap(), 0.0);
+    assert_eq!(vm.display_list.sprites.len(), 2);
+    let first = &vm.display_list.sprites[0];
+    let second = &vm.display_list.sprites[1];
+    assert_eq!(first.corners[3], [0.5, 0.5]);
+    assert_eq!(second.corners[0], [0.5, 0.5]);
+    assert_eq!(first.source_uv, [0.0, 0.0, 0.5, 1.0]);
+    assert_eq!(second.source_uv, [0.5, 0.0, 1.0, 1.0]);
+}
+
+#[test]
+fn cpu_skin_rasterizer_samples_the_same_curved_patch_source_uv_rectangle() {
+    use renderer::formats::{SkinAssets, SkinSpriteAsset};
+    use renderer::runtime::{DisplayList, SpriteDraw};
+    use std::collections::BTreeMap;
+
+    let identity = [
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ];
+    let skin = SkinAssets {
+        width: 4,
+        height: 1,
+        interpolation: false,
+        rgba: vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+        sprites: BTreeMap::from([(
+            "quad".to_owned(),
+            SkinSpriteAsset {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 1,
+                transform: identity,
+            },
+        )]),
+    };
+    let display_list = DisplayList {
+        sprites: vec![SpriteDraw {
+            sprite_id: 0,
+            corners: [[-2.0, -1.0], [-2.0, 1.0], [2.0, 1.0], [2.0, -1.0]],
+            z: [0.0; 4],
+            alpha: 1.0,
+            source_uv: [0.5, 0.0, 1.0, 1.0],
+            provenance: None,
+            trace: None,
+        }],
+    };
+
+    let ppm = display_list
+        .render_skin_ppm(2, 1, 2.0, &skin, &BTreeMap::from([(0, "quad".to_owned())]))
+        .unwrap();
+    let header = b"P6\n2 1\n255\n";
+    assert_eq!(&ppm[..header.len()], header);
+    assert_eq!(&ppm[header.len()..], &[0, 0, 255, 255, 255, 255]);
+}
+
+#[test]
 fn watch_pointed_memory_uses_in_block_pointer_pair_and_offset() {
     use renderer::watch::EngineNode as N;
     let nodes: Vec<N> = serde_json::from_value(serde_json::json!([
@@ -1148,6 +1237,8 @@ fn watch_stream_queries_use_keyed_entries_and_interpolation() {
     let mut vm = renderer::runtime::WatchVm::new(&nodes);
     vm.context
         .streams
+        .write()
+        .unwrap()
         .insert((7, 0), vec![(1.0, 10.0), (3.0, 30.0)]);
 
     assert_eq!(vm.execute(2).unwrap(), 0.0);
@@ -1376,6 +1467,7 @@ fn skin_rasterizer_samples_bound_sprite_and_composites_alpha() {
             corners: [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
             z: [0.0; 4],
             alpha: 0.5,
+            source_uv: [0.0, 0.0, 1.0, 1.0],
             provenance: None,
             trace: None,
         }],
@@ -1470,6 +1562,7 @@ fn runtime_skin_transform_precedes_sprite_transform_and_preserves_draw() {
         corners: [[-0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [0.5, -0.5]],
         z: [0.0; 4],
         alpha: 1.0,
+        source_uv: [0.0, 0.0, 1.0, 1.0],
         provenance: None,
         trace: None,
     };
@@ -1569,6 +1662,7 @@ fn skin_rasterizer_preserves_sonolus_bottom_left_corner_and_texture_orientation(
             corners: [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
             z: [0.0; 4],
             alpha: 1.0,
+            source_uv: [0.0, 0.0, 1.0, 1.0],
             provenance: None,
             trace: None,
         }],
@@ -1639,6 +1733,7 @@ fn skin_rasterizer_maps_corner_marked_texture_through_skewed_bilinear_quad() {
             corners: quad,
             z: [0.0; 4],
             alpha: 1.0,
+            source_uv: [0.0, 0.0, 1.0, 1.0],
             provenance: None,
             trace: None,
         }],
@@ -1840,6 +1935,7 @@ fn background_renders_first_and_applies_data_color_and_configuration_mask() {
             corners: [[-0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [0.5, -0.5]],
             z: [0.0; 4],
             alpha: 0.5,
+            source_uv: [0.0, 0.0, 1.0, 1.0],
             provenance: None,
             trace: None,
         }],

@@ -1,0 +1,27 @@
+{
+  "profile_name": "Minimal / Pulse",
+  "enabled": true,
+  "mode": "custom",
+  "design_size": [1920, 1080],
+  "fit": "contain",
+  "elements": [
+    {
+      "id": "timestamp",
+      "kind": "text",
+      "layout": {"x": 0.035, "y": 0.89, "width": 0.2, "height": 0.055},
+      "text": "{time}",
+      "font_size": 30,
+      "color": [235, 244, 255, 230],
+      "animations": [{"property": "opacity", "from": 0.55, "to": 1, "start": 0, "duration": 0.5, "repeat": true, "easing": "ease-in-out"}]
+    },
+    {
+      "id": "timeline",
+      "kind": "progress-bar",
+      "layout": {"x": 0, "y": 0.985, "width": 1, "height": 0.008},
+      "value": {"kind": "source", "source": {"kind": "progress"}},
+      "maximum": {"kind": "constant", "value": 1},
+      "fill": [237, 247, 255, 255],
+      "track": [15, 25, 36, 160]
+    }
+  ]
+}

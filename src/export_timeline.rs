@@ -5,6 +5,18 @@ use serde::Serialize;
 
 pub const AUDIO_RATE: u32 = 44_100;
 
+/// Map the canonical Sonolus Watch clock onto the source-media clock.
+/// `bgmOffset` is defined by the level format as `media = Watch + offset`.
+pub(crate) fn watch_to_media_time(watch_time: f64, bgm_offset: f64) -> f64 {
+    watch_time + bgm_offset
+}
+
+/// Inverse of [`watch_to_media_time`], used when a media timestamp must seek
+/// the Watch runtime (for example, selecting a media-timed chart entity).
+pub(crate) fn media_to_watch_time(media_time: f64, bgm_offset: f64) -> f64 {
+    media_time - bgm_offset
+}
+
 pub(crate) fn sample_frames(duration: f64) -> u64 {
     (duration * f64::from(AUDIO_RATE) - 1e-8).ceil() as u64
 }
@@ -43,7 +55,7 @@ impl ExportTimeline {
     }
 
     pub fn watch_to_media(self, watch: f64) -> f64 {
-        watch + self.media_offset
+        watch_to_media_time(watch, self.media_offset)
     }
 
     pub fn output_to_media(self, output: f64) -> f64 {
@@ -82,5 +94,13 @@ mod tests {
         let t = ExportTimeline::new(1.01, FrameRange::new(1.01, 0.2, 10).unwrap(), 0.0).unwrap();
         assert_eq!(t.watch_start, 1.1);
         assert_eq!(t.audio_sample_frames, 8820);
+    }
+
+    #[test]
+    fn level_media_mapping_is_one_inverse_pair_for_positive_and_negative_offsets() {
+        for (watch, offset) in [(0.0, -1.109), (14.45, 0.05), (8.0, 0.0)] {
+            let media = watch_to_media_time(watch, offset);
+            assert!((media_to_watch_time(media, offset) - watch).abs() < 1e-12);
+        }
     }
 }

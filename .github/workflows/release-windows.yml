@@ -1,0 +1,92 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  windows-x86_64:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+
+      - name: Install the validated Rust toolchain
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Cache Cargo build outputs
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate tag, worktree, and release notes
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed.' }
+          $version = $metadata.packages[0].version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match Cargo version $version." }
+          if (@(git status --porcelain=v1 --untracked-files=normal).Count -ne 0) { throw 'Release source checkout is not clean.' }
+          $notes = Join-Path $PWD "release-notes/v$version.md"
+          if (-not (Test-Path -LiteralPath $notes -PathType Leaf)) { throw "Write release notes before tagging: $notes" }
+          "SONO_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "SONO_RELEASE_NOTES=$notes" >> $env:GITHUB_ENV
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Validate localization resources
+        shell: pwsh
+        run: ./scripts/validate-locales.ps1
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets
+
+      - name: Full correctness suite
+        run: cargo test --locked --no-fail-fast
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress --version=6.4.3
+
+      - name: Locate the Windows resource compiler
+        shell: pwsh
+        run: |
+          $rc = (Get-Command 'rc.exe' -ErrorAction SilentlyContinue).Source
+          if (-not $rc) {
+            $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+            $rc = Get-ChildItem -LiteralPath $sdkRoot -Filter 'rc.exe' -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\rc\.exe$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $rc) { throw 'Windows SDK rc.exe was not found; executable version metadata cannot be embedded.' }
+          "RC=$rc" >> $env:GITHUB_ENV
+
+      - name: Build and package Windows release
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Channel stable -RequireInstaller
+
+      - name: Test extracted portable build, installer, reinstall, and uninstall
+        shell: pwsh
+        run: ./scripts/smoke-test-windows-package.ps1 -DistributionDirectory target/distribution
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'target/distribution/*'
+
+      - name: Publish GitHub release artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem -LiteralPath target/distribution -File | Sort-Object Name)
+          $arguments = @('release', 'create', $env:GITHUB_REF_NAME, '--verify-tag', '--draft', '--title', "Sono-Renderer $env:SONO_RELEASE_VERSION", '--notes-file', $env:SONO_RELEASE_NOTES)
+          $arguments += @($files | ForEach-Object { $_.FullName })
+          gh @arguments

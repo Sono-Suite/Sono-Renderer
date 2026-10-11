@@ -1,0 +1,23 @@
+{
+  "engine": "../TestingSuite/Next Sekai Engine/levels/larp 64x/Next RUSH.zip",
+  "resources": "../TestingSuite/Next Sekai Engine/levels/larp 64x/ProSeka Faithful 0.8.4.scp",
+  "level": "../TestingSuite/Next Sekai Engine/levels/larp 64x/larp 64x.json.gz",
+  "music": "../TestingSuite/Next Sekai Engine/levels/larp 64x/larp 64x.mp3",
+  "start_time": 2.5,
+  "duration": 1.0,
+  "fps": 12,
+  "width": 16,
+  "height": 16,
+  "layers": {
+    "particles": true,
+    "sfx": true,
+    "bgm": true
+  },
+  "backend": "cpu",
+  "execution_mode": "interpreter",
+  "parallel_watch_updates": false,
+  "profile": false,
+  "profile_frames": false,
+  "validate_determinism": false,
+  "frame_pipeline": false
+}

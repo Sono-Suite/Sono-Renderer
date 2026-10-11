@@ -1,16 +1,19 @@
 //! Cooperative export cancellation shared by desktop worker and backend.
 use std::{
+    collections::BTreeMap,
     io::{Read, Seek, SeekFrom},
     process::{Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 #[derive(Clone, Default)]
 pub struct ExportControl {
     cancelled: Arc<AtomicBool>,
     log: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    phase_sink: Option<Arc<dyn Fn(crate::export_progress::ExportPhase) + Send + Sync>>,
+    logged_once: Arc<Mutex<BTreeMap<String, String>>>,
 }
 #[derive(Debug)]
 pub struct Cancelled;
@@ -25,6 +28,18 @@ impl ExportControl {
         Self {
             log: Some(Arc::new(log)),
             ..Self::default()
+        }
+    }
+    pub fn with_phase_sink(
+        mut self,
+        sink: impl Fn(crate::export_progress::ExportPhase) + Send + Sync + 'static,
+    ) -> Self {
+        self.phase_sink = Some(Arc::new(sink));
+        self
+    }
+    pub fn report_phase(&self, phase: crate::export_progress::ExportPhase) {
+        if let Some(sink) = &self.phase_sink {
+            sink(phase);
         }
     }
     pub fn cancel(&self) {
@@ -44,6 +59,30 @@ impl ExportControl {
         if let Some(sink) = &self.log {
             sink(text.into());
         }
+    }
+    /// Emit a keyed warning at most once for this shared render control. The
+    /// stored message is also available to the structured diagnostic report.
+    pub fn log_once(&self, key: impl Into<String>, text: impl Into<String>) -> bool {
+        let key = key.into();
+        let text = text.into();
+        let should_log = match self.logged_once.lock() {
+            Ok(mut logged) if !logged.contains_key(&key) => {
+                logged.insert(key, text.clone());
+                true
+            }
+            Ok(_) => false,
+            Err(_) => true,
+        };
+        if should_log {
+            self.log(text);
+        }
+        should_log
+    }
+    pub fn logged_once_messages(&self) -> Vec<String> {
+        self.logged_once
+            .lock()
+            .map(|messages| messages.values().cloned().collect())
+            .unwrap_or_default()
     }
     /// Captured files avoid pipe deadlocks; every owned child is reaped on cancel.
     pub(crate) fn output(&self, command: &mut Command) -> anyhow::Result<Output> {
@@ -117,6 +156,17 @@ mod tests {
         assert!(b.check().is_ok());
         a.cancel();
         assert!(b.check().unwrap_err().is::<Cancelled>());
+    }
+
+    #[test]
+    fn keyed_warnings_are_logged_once_and_remain_available_to_diagnostics() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let sink = output.clone();
+        let control = ExportControl::with_log(move |message| sink.lock().unwrap().push(message));
+        assert!(control.log_once("family", "warning text"));
+        assert!(!control.clone().log_once("family", "warning text"));
+        assert_eq!(*output.lock().unwrap(), ["warning text"]);
+        assert_eq!(control.logged_once_messages(), ["warning text"]);
     }
 }
 

@@ -5,8 +5,8 @@
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 const MAX_EVALUATIONS: usize = 5_000_000;
@@ -18,6 +18,216 @@ pub(crate) const RUNTIME_PARTICLE_TRANSFORM_BLOCK: i64 = 1003;
 const ENTITY_DATA_ARRAY_BLOCK: i64 = 4101;
 const ENTITY_SHARED_MEMORY_ARRAY_BLOCK: i64 = 4102;
 const ENTITY_INFO_ARRAY_BLOCK: i64 = 4103;
+const TEMPORARY_MEMORY_BLOCK: i64 = 10000;
+const TEMPORARY_MEMORY_SLOTS: usize = 4096;
+pub(crate) const MAX_RUNTIME_STREAM_ENTRIES: usize = 1_000_000;
+pub const DEFAULT_WATCH_RANDOM_SEED: u64 = 0x6a09_e667_f3bc_c909;
+
+/// Static implementation status for a Watch function name. This is a
+/// conservative capability inventory maintained beside the VM dispatcher;
+/// it says whether this build has an implementation arm, not whether a graph
+/// node is reachable or valid for a particular argument shape.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchOperationImplementation {
+    Supported,
+    /// Executed with documented contracts plus explicitly documented
+    /// compatibility choices where Sonolus client behavior is underspecified.
+    Approximate,
+    Unsupported,
+    Unknown,
+}
+
+/// Controls operations whose supported contract does not establish exact
+/// Sonolus client behavior. Permissive is the backward-compatible default.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchCompatibilityPolicy {
+    #[default]
+    Permissive,
+    Strict,
+}
+
+pub fn watch_operation_implementation(name: &str) -> WatchOperationImplementation {
+    use WatchOperationImplementation::{
+        Approximate as Approx, Supported as Yes, Unknown, Unsupported as No,
+    };
+    match name {
+        "Abs"
+        | "Add"
+        | "And"
+        | "Arccos"
+        | "Arcsin"
+        | "Arctan"
+        | "Arctan2"
+        | "BeatToBPM"
+        | "BeatToStartingBeat"
+        | "BeatToStartingTime"
+        | "BeatToTime"
+        | "Block"
+        | "Break"
+        | "Ceil"
+        | "Clamp"
+        | "Copy"
+        | "Cos"
+        | "Cosh"
+        | "DebugLog"
+        | "DebugPause"
+        | "Degree"
+        | "DecrementPost"
+        | "DecrementPostPointed"
+        | "DecrementPostShifted"
+        | "DecrementPre"
+        | "DecrementPrePointed"
+        | "DecrementPreShifted"
+        | "DestroyParticleEffect"
+        | "Divide"
+        | "DoWhile"
+        | "Draw"
+        | "DrawCurvedB"
+        | "DrawCurvedBT"
+        | "DrawCurvedL"
+        | "DrawCurvedLR"
+        | "DrawCurvedR"
+        | "DrawCurvedT"
+        | "Equal"
+        | "Execute"
+        | "Floor"
+        | "Frac"
+        | "Get"
+        | "GetPointed"
+        | "GetShifted"
+        | "Greater"
+        | "GreaterOr"
+        | "HasEffectClip"
+        | "HasParticleEffect"
+        | "HasSkinSprite"
+        | "If"
+        | "IncrementPost"
+        | "IncrementPostPointed"
+        | "IncrementPostShifted"
+        | "IncrementPre"
+        | "IncrementPrePointed"
+        | "IncrementPreShifted"
+        | "JumpLoop"
+        | "Lerp"
+        | "LerpClamped"
+        | "Less"
+        | "LessOr"
+        | "Log"
+        | "Max"
+        | "Min"
+        | "Mod"
+        | "MoveParticleEffect"
+        | "Multiply"
+        | "Negate"
+        | "Not"
+        | "NotEqual"
+        | "Or"
+        | "Play"
+        | "PlayLooped"
+        | "PlayLoopedScheduled"
+        | "PlayScheduled"
+        | "Power"
+        | "Radian"
+        | "Rem"
+        | "Remap"
+        | "RemapClamped"
+        | "Round"
+        | "Set"
+        | "SetAdd"
+        | "SetAddPointed"
+        | "SetAddShifted"
+        | "SetDivide"
+        | "SetDividePointed"
+        | "SetDivideShifted"
+        | "SetMod"
+        | "SetModPointed"
+        | "SetModShifted"
+        | "SetMultiply"
+        | "SetMultiplyPointed"
+        | "SetMultiplyShifted"
+        | "SetPointed"
+        | "SetPower"
+        | "SetPowerPointed"
+        | "SetPowerShifted"
+        | "SetRem"
+        | "SetRemPointed"
+        | "SetRemShifted"
+        | "SetShifted"
+        | "SetSubtract"
+        | "SetSubtractPointed"
+        | "SetSubtractShifted"
+        | "Sign"
+        | "Sin"
+        | "Sinh"
+        | "Spawn"
+        | "SpawnParticleEffect"
+        | "StopLooped"
+        | "StopLoopedScheduled"
+        | "StreamGetNextKey"
+        | "StreamGetPreviousKey"
+        | "StreamGetValue"
+        | "StreamHas"
+        | "Subtract"
+        | "Switch"
+        | "SwitchInteger"
+        | "SwitchIntegerWithDefault"
+        | "SwitchWithDefault"
+        | "Tan"
+        | "Tanh"
+        | "TimeToScaledTime"
+        | "TimeToStartingScaledTime"
+        | "TimeToStartingTime"
+        | "TimeToTimeScale"
+        | "Trunc"
+        | "Unlerp"
+        | "UnlerpClamped"
+        | "While" => Yes,
+        name if is_supported_easing(name) => Yes,
+        "Random"
+        | "RandomInteger"
+        | "StreamSet"
+        | "StackInit"
+        | "StackEnter"
+        | "StackLeave"
+        | "StackGrow"
+        | "StackPush"
+        | "StackPop"
+        | "StackGet"
+        | "StackSet"
+        | "StackGetFrame"
+        | "StackSetFrame"
+        | "StackGetPointer"
+        | "StackSetPointer"
+        | "StackGetFramePointer"
+        | "StackSetFramePointer" => Approx,
+        "Execute0" => No,
+        _ => Unknown,
+    }
+}
+
+fn is_supported_easing(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix("Ease") else {
+        return false;
+    };
+    let Some((direction, family)) =
+        ["InOut", "OutIn", "In", "Out"]
+            .into_iter()
+            .find_map(|direction| {
+                suffix
+                    .strip_prefix(direction)
+                    .map(|family| (direction, family))
+            })
+    else {
+        return false;
+    };
+    !direction.is_empty()
+        && matches!(
+            family,
+            "Sine" | "Quad" | "Cubic" | "Quart" | "Quint" | "Expo" | "Circ" | "Back" | "Elastic"
+        )
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpriteDraw {
@@ -26,10 +236,194 @@ pub struct SpriteDraw {
     pub corners: [[f64; 2]; 4],
     pub z: [f64; 4],
     pub alpha: f64,
+    /// Normalized source sprite region, with vertical coordinate zero at the
+    /// bottom. Curved Draw is represented as ordered atlas-preserving patches.
+    #[serde(default = "full_source_uv", skip_serializing_if = "source_uv_is_full")]
+    pub source_uv: [f64; 4],
     #[serde(default)]
     pub provenance: Option<DrawProvenance>,
     #[serde(default)]
     pub trace: Option<DrawTrace>,
+}
+
+fn full_source_uv() -> [f64; 4] {
+    [0.0, 0.0, 1.0, 1.0]
+}
+
+fn source_uv_is_full(source_uv: &[f64; 4]) -> bool {
+    *source_uv == full_source_uv()
+}
+
+fn map_source_uv(draw: &SpriteDraw, u: f64, v: f64) -> (f64, f64) {
+    let [u0, v0, u1, v1] = draw.source_uv;
+    let u = u.clamp(0.0, 1.0);
+    let v = v.clamp(0.0, 1.0);
+    (u0 + u * (u1 - u0), v0 + v * (v1 - v0))
+}
+
+pub(crate) fn valid_source_uv([u0, v0, u1, v1]: [f64; 4]) -> bool {
+    [u0, v0, u1, v1].iter().all(|value| value.is_finite())
+        && 0.0 <= u0
+        && u0 <= u1
+        && u1 <= 1.0
+        && 0.0 <= v0
+        && v0 <= v1
+        && v1 <= 1.0
+}
+
+/// Tessellate the curved edges used by Sonolus DrawCurved operations into
+/// ordered quads. Watch's `p` and `q` control values address a point on the
+/// bilinear surface of the original BL, TL, TR, BR quad.
+fn curved_sprite_patches(
+    name: &str,
+    corners: [[f64; 2]; 4],
+    controls: [[f64; 2]; 2],
+    segments: usize,
+) -> Vec<([[f64; 2]; 4], [f64; 4])> {
+    let point = |u: f64, v: f64| {
+        let [bl, tl, tr, br] = corners;
+        let lerp =
+            |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        lerp(lerp(bl, br, u), lerp(tl, tr, u), v)
+    };
+    let control_point = |[p, q]: [f64; 2]| point((p + 1.0) * 0.5, (q + 1.0) * 0.5);
+    let bezier = |start: [f64; 2], control: [f64; 2], end: [f64; 2], t: f64| {
+        let one_minus_t = 1.0 - t;
+        [
+            one_minus_t * one_minus_t * start[0]
+                + 2.0 * one_minus_t * t * control[0]
+                + t * t * end[0],
+            one_minus_t * one_minus_t * start[1]
+                + 2.0 * one_minus_t * t * control[1]
+                + t * t * end[1],
+        ]
+    };
+    let horizontal = matches!(name, "DrawCurvedB" | "DrawCurvedBT" | "DrawCurvedT");
+    (0..segments)
+        .map(|index| {
+            let t0 = index as f64 / segments as f64;
+            let t1 = (index + 1) as f64 / segments as f64;
+            if horizontal {
+                let bottom = |t| {
+                    if matches!(name, "DrawCurvedB" | "DrawCurvedBT") {
+                        bezier(corners[0], control_point(controls[0]), corners[3], t)
+                    } else {
+                        point(t, 0.0)
+                    }
+                };
+                let top = |t| {
+                    if matches!(name, "DrawCurvedT") {
+                        bezier(corners[1], control_point(controls[0]), corners[2], t)
+                    } else if name == "DrawCurvedBT" {
+                        bezier(corners[1], control_point(controls[1]), corners[2], t)
+                    } else {
+                        point(t, 1.0)
+                    }
+                };
+                (
+                    [bottom(t0), top(t0), top(t1), bottom(t1)],
+                    [t0, 0.0, t1, 1.0],
+                )
+            } else {
+                let left = |t| {
+                    if matches!(name, "DrawCurvedL" | "DrawCurvedLR") {
+                        bezier(corners[0], control_point(controls[0]), corners[1], t)
+                    } else {
+                        point(0.0, t)
+                    }
+                };
+                let right = |t| {
+                    if name == "DrawCurvedR" {
+                        bezier(corners[3], control_point(controls[0]), corners[2], t)
+                    } else if name == "DrawCurvedLR" {
+                        bezier(corners[3], control_point(controls[1]), corners[2], t)
+                    } else {
+                        point(1.0, t)
+                    }
+                };
+                (
+                    [left(t0), left(t1), right(t1), right(t0)],
+                    [0.0, t0, 1.0, t1],
+                )
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod curved_draw_tests {
+    use super::curved_sprite_patches;
+
+    const RECT: [[f64; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]];
+
+    #[test]
+    fn straight_control_points_preserve_edges_and_cover_source_once() {
+        let patches = curved_sprite_patches("DrawCurvedB", RECT, [[0.0, -1.0], [0.0, 0.0]], 4);
+        assert_eq!(patches.len(), 4);
+        for (index, (corners, source_uv)) in patches.iter().enumerate() {
+            let t0 = index as f64 / 4.0;
+            let t1 = (index + 1) as f64 / 4.0;
+            assert_eq!(corners[0], [t0, 0.0]);
+            assert_eq!(corners[3], [t1, 0.0]);
+            assert_eq!(*source_uv, [t0, 0.0, t1, 1.0]);
+        }
+        assert_eq!(patches.first().unwrap().0[0], RECT[0]);
+        assert_eq!(patches.last().unwrap().0[3], RECT[3]);
+    }
+
+    #[test]
+    fn curved_edges_follow_quadratic_control_point_and_keep_opposite_edge() {
+        let bottom = curved_sprite_patches("DrawCurvedB", RECT, [[0.0, 1.0], [0.0, 0.0]], 2);
+        assert_eq!(bottom[0].0[3], [0.5, 0.5]);
+        assert_eq!(bottom[1].0[0], [0.5, 0.5]);
+        assert_eq!(bottom[0].0[1], [0.0, 1.0]);
+
+        let left = curved_sprite_patches("DrawCurvedL", RECT, [[1.0, 0.0], [0.0, 0.0]], 2);
+        assert_eq!(left[0].0[1], [0.5, 0.5]);
+        assert_eq!(left[1].0[0], [0.5, 0.5]);
+        assert_eq!(left[0].0[3], [1.0, 0.0]);
+        assert_eq!(left[0].1, [0.0, 0.0, 1.0, 0.5]);
+    }
+
+    #[test]
+    fn all_curved_draw_variants_tessellate_the_documented_edges() {
+        for name in ["DrawCurvedB", "DrawCurvedBT", "DrawCurvedT"] {
+            let controls = if name == "DrawCurvedBT" {
+                [[0.0, 1.0], [0.0, -1.0]]
+            } else {
+                [[0.0, 1.0], [0.0, 0.0]]
+            };
+            let patches = curved_sprite_patches(name, RECT, controls, 3);
+            assert_eq!(patches.len(), 3, "{name}");
+            assert_eq!(patches[0].1[0], 0.0, "{name}");
+            assert_eq!(patches[2].1[2], 1.0, "{name}");
+        }
+        for name in ["DrawCurvedL", "DrawCurvedLR", "DrawCurvedR"] {
+            let controls = if name == "DrawCurvedLR" {
+                [[1.0, 0.0], [-1.0, 0.0]]
+            } else {
+                [[1.0, 0.0], [0.0, 0.0]]
+            };
+            let patches = curved_sprite_patches(name, RECT, controls, 3);
+            assert_eq!(patches.len(), 3, "{name}");
+            assert_eq!(patches[0].1[1], 0.0, "{name}");
+            assert_eq!(patches[2].1[3], 1.0, "{name}");
+        }
+    }
+
+    #[test]
+    fn ordinary_draw_json_keeps_legacy_shape_and_defaults_to_full_source() {
+        let draw: super::SpriteDraw = serde_json::from_value(serde_json::json!({
+            "sprite_id":0,
+            "corners":[[0.0,0.0],[0.0,1.0],[1.0,1.0],[1.0,0.0]],
+            "z":[0.0,0.0,0.0,0.0],
+            "alpha":1.0
+        }))
+        .unwrap();
+        assert_eq!(draw.source_uv, [0.0, 0.0, 1.0, 1.0]);
+        let encoded = serde_json::to_value(draw).unwrap();
+        assert!(encoded.get("source_uv").is_none());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -435,11 +829,9 @@ impl DisplayList {
                     if !(-1e-7..=1.0000001).contains(&u) || !(-1e-7..=1.0000001).contains(&v) {
                         continue;
                     }
-                    let tex_x =
-                        f64::from(sprite.x) + u.clamp(0.0, 1.0) * f64::from(sprite.width) - 0.5;
-                    let tex_y = f64::from(sprite.y)
-                        + (1.0 - v.clamp(0.0, 1.0)) * f64::from(sprite.height)
-                        - 0.5;
+                    let (u, v) = map_source_uv(draw, u, v);
+                    let tex_x = f64::from(sprite.x) + u * f64::from(sprite.width) - 0.5;
+                    let tex_y = f64::from(sprite.y) + (1.0 - v) * f64::from(sprite.height) - 0.5;
                     let sample = sample_skin(skin, sprite, tex_x, tex_y);
                     let sample_alpha = sample[3];
                     sampled_alpha_min = sampled_alpha_min.min(sample_alpha);
@@ -692,6 +1084,7 @@ impl DisplayList {
             if !draw.alpha.is_finite()
                 || !draw.corners.iter().flatten().all(|value| value.is_finite())
                 || !draw.z.iter().all(|value| value.is_finite())
+                || !valid_source_uv(draw.source_uv)
             {
                 continue;
             }
@@ -760,9 +1153,9 @@ impl DisplayList {
                     {
                         continue;
                     }
-                    let tex_x = sprite.x as f64 + u.clamp(0.0, 1.0) * sprite.width as f64 - 0.5;
-                    let tex_y =
-                        sprite.y as f64 + (1.0 - v.clamp(0.0, 1.0)) * sprite.height as f64 - 0.5;
+                    let (u, v) = map_source_uv(draw, u, v);
+                    let tex_x = sprite.x as f64 + u * sprite.width as f64 - 0.5;
+                    let tex_y = sprite.y as f64 + (1.0 - v) * sprite.height as f64 - 0.5;
                     let sample = sample_skin(skin, sprite, tex_x, tex_y);
                     let source_alpha = alpha * f64::from(sample[3]) / 255.0;
                     let offset = (py as usize * width as usize + px as usize) * 3;
@@ -824,6 +1217,7 @@ impl DisplayList {
                     corners: draw.corners,
                     z: [0.0; 4],
                     alpha: draw.alpha,
+                    source_uv: full_source_uv(),
                     provenance: None,
                     trace: None,
                 },
@@ -1107,11 +1501,12 @@ pub(crate) fn skin_sample_at_pixel_in_mode(
     {
         return None;
     }
+    let (u, v) = map_source_uv(draw, u, v);
     Some(sample_skin(
         skin,
         sprite,
-        f64::from(sprite.x) + u.clamp(0.0, 1.0) * f64::from(sprite.width) - 0.5,
-        f64::from(sprite.y) + (1.0 - v.clamp(0.0, 1.0)) * f64::from(sprite.height) - 0.5,
+        f64::from(sprite.x) + u * f64::from(sprite.width) - 0.5,
+        f64::from(sprite.y) + (1.0 - v) * f64::from(sprite.height) - 0.5,
     ))
 }
 
@@ -1173,6 +1568,7 @@ pub(crate) fn gpu_transform_particle_corners(
             corners: draw.corners,
             z: [0.0; 4],
             alpha: draw.alpha,
+            source_uv: full_source_uv(),
             provenance: None,
             trace: None,
         },
@@ -1339,6 +1735,7 @@ impl Memory {
             .unwrap_or(0.0)
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         let Some(base) = &self.base else {
             return self.values.len();
@@ -1488,7 +1885,6 @@ impl Memory {
             values,
             base,
             mut hidden_blocks,
-            entity_baseline: _,
             ..
         } = self;
         for block in excluded_blocks {
@@ -1688,6 +2084,8 @@ pub struct WatchVm<'a> {
     depth: usize,
     block_depth: usize,
     break_signal: Option<(usize, f64)>,
+    stack: WatchStack,
+    compatibility_warnings: BTreeMap<String, String>,
     pub context: VmContext,
     pub function_counts: BTreeMap<String, u64>,
     pub skin_checks: Vec<(i64, bool)>,
@@ -1707,6 +2105,10 @@ pub struct WatchVm<'a> {
     sono_gcc_regions_executed: u64,
     sono_gcc_vm_to_native_cut_calls: u64,
     sono_gcc_overflow_input_regions: u64,
+    sono_gcc_region_size_executions: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    sono_gcc_region_size_cut_calls: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    sono_gcc_small_region_bypasses: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    sono_gcc_cut_operation_counts: HashMap<&'a str, u64>,
     sono_gcc_region_dispatch_time: std::time::Duration,
     sono_gcc_vm_cut_evaluation_time: std::time::Duration,
     sono_gcc_native_execution_time: std::time::Duration,
@@ -1732,6 +2134,7 @@ pub(crate) struct WatchVmCallbackOutput {
     pub destroyed_particle_effects: Vec<DestroyedParticleEffect>,
     pub particle_events: Vec<ParticleEffectEvent>,
     pub debug_events: Vec<DebugEvent>,
+    pub compatibility_warnings: BTreeMap<String, String>,
     pub function_counts: BTreeMap<String, u64>,
     pub skin_checks: Vec<(i64, bool)>,
     pub evaluations: usize,
@@ -1739,11 +2142,49 @@ pub(crate) struct WatchVmCallbackOutput {
     pub sono_gcc_regions_executed: u64,
     pub sono_gcc_vm_to_native_cut_calls: u64,
     pub sono_gcc_overflow_input_regions: u64,
+    pub sono_gcc_region_size_executions: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    pub sono_gcc_region_size_cut_calls: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    pub sono_gcc_small_region_bypasses: [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    pub sono_gcc_cut_operation_counts: BTreeMap<String, u64>,
     pub sono_gcc_profile_times: (
         std::time::Duration,
         std::time::Duration,
         std::time::Duration,
     ),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WatchStackFrame {
+    saved_stack_pointer: usize,
+    saved_frame_pointer: usize,
+}
+
+#[derive(Debug)]
+struct WatchStack {
+    stack_pointer: usize,
+    frame_pointer: usize,
+    stack_floor: usize,
+    frames: Vec<WatchStackFrame>,
+}
+
+impl Default for WatchStack {
+    fn default() -> Self {
+        Self {
+            stack_pointer: TEMPORARY_MEMORY_SLOTS,
+            frame_pointer: TEMPORARY_MEMORY_SLOTS,
+            stack_floor: 0,
+            frames: Vec::new(),
+        }
+    }
+}
+
+impl WatchStack {
+    fn with_floor(stack_floor: usize) -> Self {
+        Self {
+            stack_floor: stack_floor.min(TEMPORARY_MEMORY_SLOTS),
+            ..Self::default()
+        }
+    }
 }
 
 struct VmDiagnostics {
@@ -1776,7 +2217,12 @@ pub struct VmContext {
     pub particle_instances: Arc<RwLock<ParticleEffectState>>,
     /// Instance IDs are shared by all callback VMs in a Watch run.
     pub next_looped_effect_id: Arc<AtomicI64>,
-    pub streams: BTreeMap<(i64, i64), Vec<(f64, f64)>>,
+    /// Replay input and mutable StreamSet output share one ordered store for
+    /// the lifetime of this Watch runtime.
+    pub streams: Arc<RwLock<BTreeMap<(i64, i64), Vec<(f64, f64)>>>>,
+    pub stream_entry_count: Arc<AtomicUsize>,
+    pub random_state: Arc<AtomicU64>,
+    pub compatibility_policy: WatchCompatibilityPolicy,
     pub time_map: Vec<(f64, f64)>,
     pub timescale_map: Vec<(f64, f64)>,
     pub bpm_map: Vec<(f64, f64)>,
@@ -1808,6 +2254,16 @@ pub struct VmContext {
 
 impl<'a> WatchVm<'a> {
     pub fn new(nodes: &'a [crate::watch::EngineNode]) -> Self {
+        Self::new_with_stack_floor(nodes, temporary_memory_floor(nodes))
+    }
+
+    /// Build a callback VM with the immutable Watch graph's stack reservation
+    /// already analyzed by its owning runtime. This avoids rescanning every
+    /// engine node for every entity callback.
+    pub(crate) fn new_with_stack_floor(
+        nodes: &'a [crate::watch::EngineNode],
+        stack_floor: usize,
+    ) -> Self {
         Self {
             nodes,
             memory: Memory::default(),
@@ -1824,8 +2280,11 @@ impl<'a> WatchVm<'a> {
             depth: 0,
             block_depth: 0,
             break_signal: None,
+            stack: WatchStack::with_floor(stack_floor),
+            compatibility_warnings: BTreeMap::new(),
             context: VmContext {
                 timescale: 1.0,
+                random_state: Arc::new(AtomicU64::new(DEFAULT_WATCH_RANDOM_SEED)),
                 ..VmContext::default()
             },
             function_counts: BTreeMap::new(),
@@ -1845,6 +2304,10 @@ impl<'a> WatchVm<'a> {
             sono_gcc_regions_executed: 0,
             sono_gcc_vm_to_native_cut_calls: 0,
             sono_gcc_overflow_input_regions: 0,
+            sono_gcc_region_size_executions: [0; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+            sono_gcc_region_size_cut_calls: [0; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+            sono_gcc_small_region_bypasses: [0; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+            sono_gcc_cut_operation_counts: HashMap::new(),
             sono_gcc_region_dispatch_time: std::time::Duration::ZERO,
             sono_gcc_vm_cut_evaluation_time: std::time::Duration::ZERO,
             sono_gcc_native_execution_time: std::time::Duration::ZERO,
@@ -1877,6 +2340,70 @@ impl<'a> WatchVm<'a> {
         self.sono_gcc_program = program;
     }
 
+    pub(crate) fn take_compatibility_warnings(&mut self) -> BTreeMap<String, String> {
+        std::mem::take(&mut self.compatibility_warnings)
+    }
+
+    fn note_approximate_operation(&mut self, name: &str) -> Result<()> {
+        let Some((family, warning)) = approximate_operation_warning(name) else {
+            return Ok(());
+        };
+        if self.context.compatibility_policy == WatchCompatibilityPolicy::Strict {
+            bail!("Watch operation {name} requires approximate compatibility semantics; Strict policy rejects it because exact Sonolus client behavior is not established");
+        }
+        self.compatibility_warnings
+            .entry(family.to_owned())
+            .or_insert_with(|| warning.to_owned());
+        Ok(())
+    }
+
+    fn next_random_u64(&self) -> u64 {
+        const STEP: u64 = 0x9e37_79b9_7f4a_7c15;
+        let state = self
+            .context
+            .random_state
+            .fetch_add(STEP, Ordering::Relaxed)
+            .wrapping_add(STEP);
+        let mut mixed = state;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        mixed ^ (mixed >> 31)
+    }
+
+    fn stack_slot(&self, base: usize, offset: f64, label: &str) -> Result<usize> {
+        let offset = integer(offset, label)?;
+        let slot = (base as i64)
+            .checked_add(offset)
+            .context("stack address overflow")?;
+        usize::try_from(slot)
+            .ok()
+            .filter(|slot| *slot >= self.stack.stack_floor && *slot < TEMPORARY_MEMORY_SLOTS)
+            .with_context(|| format!("{label} addresses a slot outside Temporary Memory"))
+    }
+
+    fn stack_read(&self, base: usize, offset: f64, label: &str) -> Result<f64> {
+        let slot = self.stack_slot(base, offset, label)?;
+        Ok(self.memory.get(TEMPORARY_MEMORY_BLOCK, slot))
+    }
+
+    fn stack_write(&mut self, base: usize, offset: f64, value: f64, label: &str) -> Result<()> {
+        let slot = self.stack_slot(base, offset, label)?;
+        self.memory.set(TEMPORARY_MEMORY_BLOCK, slot, value);
+        Ok(())
+    }
+
+    fn set_stack_pointer(&mut self, value: f64, label: &str) -> Result<usize> {
+        let pointer = stack_pointer_value(value, label)?;
+        if pointer < self.stack.stack_floor {
+            bail!(
+                "{label} would overlap statically addressed Temporary Memory slots below {}",
+                self.stack.stack_floor
+            );
+        }
+        self.stack.stack_pointer = pointer;
+        Ok(pointer)
+    }
+
     pub(crate) fn sono_gcc_regions_executed(&self) -> u64 {
         self.sono_gcc_regions_executed
     }
@@ -1887,6 +2414,24 @@ impl<'a> WatchVm<'a> {
 
     pub(crate) fn sono_gcc_overflow_input_regions(&self) -> u64 {
         self.sono_gcc_overflow_input_regions
+    }
+
+    pub(crate) fn sono_gcc_region_size_profile(
+        &self,
+    ) -> (
+        [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+        [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+        [u64; crate::sono_gcc::REGION_SIZE_BUCKET_COUNT],
+    ) {
+        (
+            self.sono_gcc_region_size_executions,
+            self.sono_gcc_region_size_cut_calls,
+            self.sono_gcc_small_region_bypasses,
+        )
+    }
+
+    pub(crate) fn sono_gcc_cut_operation_counts(&self) -> &HashMap<&'a str, u64> {
+        &self.sono_gcc_cut_operation_counts
     }
 
     pub(crate) fn sono_gcc_profile_times(
@@ -1905,6 +2450,11 @@ impl<'a> WatchVm<'a> {
 
     pub(crate) fn into_callback_output(self, result: Result<f64>) -> WatchVmCallbackOutput {
         let sono_gcc_profile_times = self.sono_gcc_profile_times();
+        let sono_gcc_cut_operation_counts = self
+            .sono_gcc_cut_operation_counts
+            .into_iter()
+            .map(|(name, count)| (name.to_owned(), count))
+            .collect();
         WatchVmCallbackOutput {
             result,
             memory: self.memory,
@@ -1917,6 +2467,7 @@ impl<'a> WatchVm<'a> {
             destroyed_particle_effects: self.destroyed_particle_effects,
             particle_events: self.particle_events,
             debug_events: self.debug_events,
+            compatibility_warnings: self.compatibility_warnings,
             function_counts: self.function_counts,
             skin_checks: self.skin_checks,
             evaluations: self.evaluations,
@@ -1924,6 +2475,10 @@ impl<'a> WatchVm<'a> {
             sono_gcc_regions_executed: self.sono_gcc_regions_executed,
             sono_gcc_vm_to_native_cut_calls: self.sono_gcc_vm_to_native_cut_calls,
             sono_gcc_overflow_input_regions: self.sono_gcc_overflow_input_regions,
+            sono_gcc_region_size_executions: self.sono_gcc_region_size_executions,
+            sono_gcc_region_size_cut_calls: self.sono_gcc_region_size_cut_calls,
+            sono_gcc_small_region_bypasses: self.sono_gcc_small_region_bypasses,
+            sono_gcc_cut_operation_counts,
             sono_gcc_profile_times,
         }
     }
@@ -2240,6 +2795,15 @@ impl<'a> WatchVm<'a> {
         }
         let dispatch_started = self.profiling.then(std::time::Instant::now);
         let region = self.sono_gcc_program.as_ref()?.region(index)?;
+        if region.compiled_nodes.len() < crate::sono_gcc::MIN_NATIVE_REGION_NODES {
+            if self.profiling {
+                self.sono_gcc_small_region_bypasses[region.size_bucket()] += 1;
+            }
+            if let Some(started) = dispatch_started {
+                self.sono_gcc_region_dispatch_time += started.elapsed();
+            }
+            return None;
+        }
         let base_depth = self.depth;
         if self
             .evaluations
@@ -2271,6 +2835,15 @@ impl<'a> WatchVm<'a> {
             .zip(inputs.iter_mut())
         {
             self.sono_gcc_vm_to_native_cut_calls += 1;
+            if self.profiling {
+                if let Some(operation) = self.nodes.get(node).and_then(|node| node.func.as_deref())
+                {
+                    *self
+                        .sono_gcc_cut_operation_counts
+                        .entry(operation)
+                        .or_default() += 1;
+                }
+            }
             self.depth = base_depth + relative_depth;
             let result = self.eval(node);
             self.depth = base_depth;
@@ -2308,6 +2881,11 @@ impl<'a> WatchVm<'a> {
             }
         }
         self.sono_gcc_regions_executed += 1;
+        if self.profiling {
+            let bucket = region.size_bucket();
+            self.sono_gcc_region_size_executions[bucket] += 1;
+            self.sono_gcc_region_size_cut_calls[bucket] += region.cut_nodes.len() as u64;
+        }
         let native_started = self.profiling.then(std::time::Instant::now);
         let result = region.run(inputs);
         if let Some(started) = native_started {
@@ -2482,7 +3060,7 @@ impl<'a> WatchVm<'a> {
     fn allocate_looped_effect_id(&self) -> Result<i64> {
         self.context
             .next_looped_effect_id
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 // VM numeric values are f64, so every issued handle remains
                 // exactly representable as well as within i64 range.
                 (next <= 9_007_199_254_740_991)
@@ -2889,10 +3467,52 @@ impl<'a> WatchVm<'a> {
                 let beat = self.arg(index, 0)?;
                 self.context.bpm_at_beat(beat)
             }
+            "Random" => {
+                self.note_approximate_operation(name)?;
+                if count != 2 {
+                    bail!("Random requires exactly two arguments, got {count}");
+                }
+                let min = self.arg(index, 0)?;
+                let max = self.arg(index, 1)?;
+                if !min.is_finite() || !max.is_finite() || min > max {
+                    bail!("Random bounds must be finite and ordered, got [{min}, {max}]");
+                }
+                if min == max {
+                    return Ok(min);
+                }
+                let fraction = (self.next_random_u64() >> 11) as f64 / 9_007_199_254_740_991.0;
+                Ok((min * (1.0 - fraction) + max * fraction).clamp(min, max))
+            }
+            "RandomInteger" => {
+                self.note_approximate_operation(name)?;
+                if count != 2 {
+                    bail!("RandomInteger requires exactly two arguments, got {count}");
+                }
+                let min = integer(self.arg(index, 0)?, "RandomInteger minimum")?;
+                let max = integer(self.arg(index, 1)?, "RandomInteger maximum")?;
+                const EXACT_F64_INTEGER_LIMIT: i64 = 9_007_199_254_740_992;
+                if min < -EXACT_F64_INTEGER_LIMIT || max > EXACT_F64_INTEGER_LIMIT || min >= max {
+                    bail!("RandomInteger bounds must form a non-empty half-open range within the exactly representable integer range [-2^53, 2^53], got [{min}, {max})");
+                }
+                let width = (max - min) as u64;
+                let threshold = 0_u64.wrapping_sub(width) % width;
+                let sample = loop {
+                    let sample = self.next_random_u64();
+                    if sample >= threshold {
+                        break sample % width;
+                    }
+                };
+                Ok((i128::from(min) + i128::from(sample)) as f64)
+            }
             "StreamHas" | "StreamGetValue" | "StreamGetPreviousKey" | "StreamGetNextKey" => {
                 let stream = integer(self.arg(index, 0)?, "stream id")?;
                 let time = self.arg(index, 1)?;
-                let key = self.context.streams.get(&(stream, 0));
+                let streams = self
+                    .context
+                    .streams
+                    .read()
+                    .map_err(|_| anyhow::anyhow!("Watch stream state lock was poisoned"))?;
+                let key = streams.get(&(stream, 0));
                 match name {
                     "StreamHas" => {
                         Ok(truth(key.is_some_and(|events| {
@@ -2911,6 +3531,194 @@ impl<'a> WatchVm<'a> {
                         .map(|(t, _)| *t)
                         .unwrap_or(time)),
                 }
+            }
+            "StreamSet" => {
+                self.note_approximate_operation(name)?;
+                if count != 3 {
+                    bail!("StreamSet requires exactly three arguments, got {count}");
+                }
+                let id = integer(self.arg(index, 0)?, "stream id")?;
+                let key = self.arg(index, 1)?;
+                let value = self.arg(index, 2)?;
+                if !key.is_finite() || !value.is_finite() {
+                    bail!("StreamSet key and value must be finite");
+                }
+                let mut streams = self
+                    .context
+                    .streams
+                    .write()
+                    .map_err(|_| anyhow::anyhow!("Watch stream state lock was poisoned"))?;
+                if let Some((_, existing_value)) = streams
+                    .get_mut(&(id, 0))
+                    .and_then(|events| events.iter_mut().find(|(existing, _)| *existing == key))
+                {
+                    *existing_value = value;
+                } else {
+                    if self.context.stream_entry_count.load(Ordering::Relaxed)
+                        >= MAX_RUNTIME_STREAM_ENTRIES
+                    {
+                        bail!("StreamSet exceeds the {MAX_RUNTIME_STREAM_ENTRIES}-entry Watch stream limit");
+                    }
+                    let events = streams.entry((id, 0)).or_default();
+                    let index = events.partition_point(|(existing, _)| *existing < key);
+                    events.insert(index, (key, value));
+                    self.context
+                        .stream_entry_count
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(0.0)
+            }
+            "StackInit" => {
+                self.note_approximate_operation(name)?;
+                if count != 0 {
+                    bail!("StackInit does not take arguments, got {count}");
+                }
+                self.stack = WatchStack::with_floor(self.stack.stack_floor);
+                Ok(0.0)
+            }
+            "StackEnter" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!("StackEnter requires exactly one size argument, got {count}");
+                }
+                let size = index_of(self.arg(index, 0)?)?;
+                if size > self.stack.stack_pointer - self.stack.stack_floor {
+                    bail!(
+                        "StackEnter size {size} exceeds remaining Temporary Memory stack capacity"
+                    );
+                }
+                if self.stack.frames.len() >= TEMPORARY_MEMORY_SLOTS {
+                    bail!("StackEnter exceeds the bounded stack frame depth");
+                }
+                let next_pointer = self.stack.stack_pointer - size;
+                self.stack.frames.push(WatchStackFrame {
+                    saved_stack_pointer: self.stack.stack_pointer,
+                    saved_frame_pointer: self.stack.frame_pointer,
+                });
+                self.stack.stack_pointer = next_pointer;
+                self.stack.frame_pointer = next_pointer;
+                Ok(0.0)
+            }
+            "StackLeave" => {
+                self.note_approximate_operation(name)?;
+                if count != 0 {
+                    bail!("StackLeave does not take arguments, got {count}");
+                }
+                let frame = self
+                    .stack
+                    .frames
+                    .pop()
+                    .context("StackLeave called without a matching StackEnter")?;
+                self.stack.stack_pointer = frame.saved_stack_pointer;
+                self.stack.frame_pointer = frame.saved_frame_pointer;
+                Ok(0.0)
+            }
+            "StackGrow" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!("StackGrow requires exactly one size argument, got {count}");
+                }
+                let size = index_of(self.arg(index, 0)?)?;
+                if size > self.stack.stack_pointer - self.stack.stack_floor {
+                    bail!(
+                        "StackGrow size {size} exceeds remaining Temporary Memory stack capacity"
+                    );
+                }
+                self.stack.stack_pointer -= size;
+                Ok(self.stack.stack_pointer as f64)
+            }
+            "StackPush" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!("StackPush requires exactly one value argument, got {count}");
+                }
+                if self.stack.stack_pointer <= self.stack.stack_floor {
+                    bail!("StackPush exceeded Temporary Memory stack capacity or its reserved memory boundary");
+                }
+                let value = self.arg(index, 0)?;
+                self.stack.stack_pointer -= 1;
+                self.memory
+                    .set(TEMPORARY_MEMORY_BLOCK, self.stack.stack_pointer, value);
+                Ok(self.stack.stack_pointer as f64)
+            }
+            "StackPop" => {
+                self.note_approximate_operation(name)?;
+                if count != 0 {
+                    bail!("StackPop does not take arguments, got {count}");
+                }
+                if self.stack.stack_pointer >= TEMPORARY_MEMORY_SLOTS {
+                    bail!("StackPop underflowed Temporary Memory stack");
+                }
+                let value = self
+                    .memory
+                    .get(TEMPORARY_MEMORY_BLOCK, self.stack.stack_pointer);
+                self.stack.stack_pointer += 1;
+                Ok(value)
+            }
+            "StackGet" | "StackGetFrame" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!("{name} requires exactly one offset argument, got {count}");
+                }
+                let offset = self.arg(index, 0)?;
+                let base = if name == "StackGet" {
+                    self.stack.stack_pointer
+                } else {
+                    self.stack.frame_pointer
+                };
+                self.stack_read(base, offset, "stack offset")
+            }
+            "StackSet" | "StackSetFrame" => {
+                self.note_approximate_operation(name)?;
+                if count != 2 {
+                    bail!("{name} requires exactly an offset and value, got {count} arguments");
+                }
+                let offset = self.arg(index, 0)?;
+                let value = self.arg(index, 1)?;
+                let base = if name == "StackSet" {
+                    self.stack.stack_pointer
+                } else {
+                    self.stack.frame_pointer
+                };
+                self.stack_write(base, offset, value, "stack offset")?;
+                Ok(0.0)
+            }
+            "StackGetPointer" => {
+                self.note_approximate_operation(name)?;
+                if count != 0 {
+                    bail!("StackGetPointer does not take arguments, got {count}");
+                }
+                Ok(self.stack.stack_pointer as f64)
+            }
+            "StackSetPointer" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!("StackSetPointer requires exactly one pointer argument, got {count}");
+                }
+                let pointer = self.arg(index, 0)?;
+                self.set_stack_pointer(pointer, "stack pointer")?;
+                Ok(0.0)
+            }
+            "StackGetFramePointer" => {
+                self.note_approximate_operation(name)?;
+                if count != 0 {
+                    bail!("StackGetFramePointer does not take arguments, got {count}");
+                }
+                Ok(self.stack.frame_pointer as f64)
+            }
+            "StackSetFramePointer" => {
+                self.note_approximate_operation(name)?;
+                if count != 1 {
+                    bail!(
+                        "StackSetFramePointer requires exactly one pointer argument, got {count}"
+                    );
+                }
+                let pointer = stack_pointer_value(self.arg(index, 0)?, "frame pointer")?;
+                if pointer < self.stack.stack_floor {
+                    bail!("frame pointer would overlap statically addressed Temporary Memory slots below {}", self.stack.stack_floor);
+                }
+                self.stack.frame_pointer = pointer;
+                Ok(0.0)
             }
             "SwitchWithDefault" => {
                 let discriminant = self.arg(index, 0)?;
@@ -3323,6 +4131,99 @@ impl<'a> WatchVm<'a> {
                 });
                 Ok(if name.contains("Pre") { old } else { new })
             }
+            "DrawCurvedB" | "DrawCurvedBT" | "DrawCurvedL" | "DrawCurvedLR" | "DrawCurvedR"
+            | "DrawCurvedT" => {
+                let args = self.all_args(index)?;
+                let two_edges = matches!(name, "DrawCurvedBT" | "DrawCurvedLR");
+                let required = if two_edges { 16 } else { 14 };
+                if args.len() != required && args.len() != required + 3 {
+                    bail!(
+                        "{name} requires {required} or {} arguments, got {}",
+                        required + 3,
+                        args.len()
+                    );
+                }
+                // Match Draw's exact no-sprite sentinel after eager argument
+                // evaluation; other negative IDs still fail normal validation.
+                if args[0] == -1.0 {
+                    return Ok(0.0);
+                }
+                let sprite_id = integer(args[0], "sprite id")?;
+                let sprite_id =
+                    u32::try_from(sprite_id).context("sprite id is outside u32 range")?;
+                let segment_count = index_of(args[11])?;
+                if !(1..=4096).contains(&segment_count) {
+                    bail!("{name} segment count must be in 1..=4096");
+                }
+                let corners = [
+                    [args[1], args[2]],
+                    [args[3], args[4]],
+                    [args[5], args[6]],
+                    [args[7], args[8]],
+                ];
+                let controls = if two_edges {
+                    [[args[12], args[13]], [args[14], args[15]]]
+                } else {
+                    [[args[12], args[13]], [0.0, 0.0]]
+                };
+                let geometry = curved_sprite_patches(name, corners, controls, segment_count);
+                let z = if args.len() == required + 3 {
+                    [
+                        args[9],
+                        args[required],
+                        args[required + 1],
+                        args[required + 2],
+                    ]
+                } else {
+                    [args[9]; 4]
+                };
+                let provenance = DrawProvenance {
+                    entity_id: self.context.entity_id,
+                    archetype: self.context.entity_archetype.clone(),
+                    callback: self.context.callback_name.clone(),
+                    callback_node: self.context.callback_node,
+                    draw_node: index,
+                };
+                let trace = self.trace_draws.then(|| DrawTrace {
+                    argument_nodes: self.nodes[index]
+                        .args
+                        .iter()
+                        .map(|argument| {
+                            argument
+                                .as_u64()
+                                .map(|node| node as usize)
+                                .unwrap_or(usize::MAX)
+                        })
+                        .collect(),
+                    node_values: self.draw_argument_values.clone(),
+                    node_value_texts: self.draw_argument_value_texts.clone(),
+                    memory_reads: self.draw_memory_reads.clone(),
+                    memory_writes: self
+                        .last_memory_writes
+                        .iter()
+                        .map(|(&(block, slot), &(node, value))| MemoryWriteTrace {
+                            node,
+                            block,
+                            index: slot,
+                            value,
+                            value_text: trace_value(value),
+                        })
+                        .collect(),
+                    memory_operations: self.draw_memory_operations.clone(),
+                });
+                self.display_list.sprites.extend(geometry.into_iter().map(
+                    |(patch_corners, source_uv)| SpriteDraw {
+                        sprite_id,
+                        corners: patch_corners,
+                        z,
+                        alpha: args[10],
+                        source_uv,
+                        provenance: Some(provenance.clone()),
+                        trace: trace.clone(),
+                    },
+                ));
+                Ok(0.0)
+            }
             "Draw" => {
                 let args = self.all_args(index)?;
                 if args.len() != 11 && args.len() != 14 {
@@ -3353,6 +4254,7 @@ impl<'a> WatchVm<'a> {
                         *args.get(13).unwrap_or(&args[9]),
                     ],
                     alpha: args[10],
+                    source_uv: full_source_uv(),
                     provenance: Some(DrawProvenance {
                         entity_id: self.context.entity_id,
                         archetype: self.context.entity_archetype.clone(),
@@ -4033,6 +4935,179 @@ fn integer(value: f64, label: &str) -> Result<i64> {
     Ok(value as i64)
 }
 
+pub(crate) fn temporary_memory_floor(nodes: &[crate::watch::EngineNode]) -> usize {
+    fn constant_argument(
+        nodes: &[crate::watch::EngineNode],
+        node: &crate::watch::EngineNode,
+        argument: usize,
+    ) -> Option<f64> {
+        let child = node.args.get(argument)?.as_u64()? as usize;
+        nodes.get(child)?.value.as_ref()?.as_f64()
+    }
+
+    fn reserve_range(
+        floor: &mut usize,
+        block: Option<f64>,
+        start: Option<f64>,
+        count: Option<f64>,
+    ) {
+        let Some(block) = block else {
+            *floor = TEMPORARY_MEMORY_SLOTS;
+            return;
+        };
+        if block != TEMPORARY_MEMORY_BLOCK as f64 {
+            return;
+        }
+        let Some(start) =
+            start.filter(|value| value.is_finite() && value.fract() == 0.0 && *value >= 0.0)
+        else {
+            *floor = TEMPORARY_MEMORY_SLOTS;
+            return;
+        };
+        let Some(count) =
+            count.filter(|value| value.is_finite() && value.fract() == 0.0 && *value >= 0.0)
+        else {
+            *floor = TEMPORARY_MEMORY_SLOTS;
+            return;
+        };
+        let end = (start as usize)
+            .saturating_add(count as usize)
+            .min(TEMPORARY_MEMORY_SLOTS);
+        *floor = (*floor).max(end);
+    }
+
+    let mut floor = 0;
+    for node in nodes {
+        let Some(name) = node.func.as_deref() else {
+            continue;
+        };
+        match name {
+            "Get" | "GetPointed" => {
+                if name == "GetPointed" {
+                    floor = TEMPORARY_MEMORY_SLOTS;
+                } else {
+                    reserve_range(
+                        &mut floor,
+                        constant_argument(nodes, node, 0),
+                        constant_argument(nodes, node, 1),
+                        Some(1.0),
+                    );
+                }
+            }
+            "Set" | "SetAdd" | "SetSubtract" | "SetMultiply" | "SetDivide" | "SetMod"
+            | "SetRem" | "SetPower" | "IncrementPost" | "IncrementPre" | "DecrementPost"
+            | "DecrementPre" => reserve_range(
+                &mut floor,
+                constant_argument(nodes, node, 0),
+                constant_argument(nodes, node, 1),
+                Some(1.0),
+            ),
+            "GetShifted" => {
+                let slot = match (
+                    constant_argument(nodes, node, 1),
+                    constant_argument(nodes, node, 2),
+                    constant_argument(nodes, node, 3),
+                ) {
+                    (Some(x), Some(y), Some(stride)) => Some(x + y * stride),
+                    _ => None,
+                };
+                reserve_range(
+                    &mut floor,
+                    constant_argument(nodes, node, 0),
+                    slot,
+                    Some(1.0),
+                );
+            }
+            "SetShifted" | "SetAddShifted" | "SetSubtractShifted" | "SetMultiplyShifted"
+            | "SetDivideShifted" | "SetModShifted" | "SetRemShifted" | "SetPowerShifted" => {
+                let slot = match (
+                    constant_argument(nodes, node, 1),
+                    constant_argument(nodes, node, 2),
+                    constant_argument(nodes, node, 3),
+                ) {
+                    (Some(x), Some(y), Some(stride)) => Some(x + y * stride),
+                    _ => None,
+                };
+                reserve_range(
+                    &mut floor,
+                    constant_argument(nodes, node, 0),
+                    slot,
+                    Some(1.0),
+                );
+            }
+            "SetPointed"
+            | "SetAddPointed"
+            | "SetSubtractPointed"
+            | "SetMultiplyPointed"
+            | "SetDividePointed"
+            | "SetModPointed"
+            | "SetRemPointed"
+            | "SetPowerPointed"
+            | "IncrementPostPointed"
+            | "IncrementPrePointed"
+            | "DecrementPostPointed"
+            | "DecrementPrePointed" => {
+                floor = TEMPORARY_MEMORY_SLOTS;
+            }
+            "Copy" => {
+                reserve_range(
+                    &mut floor,
+                    constant_argument(nodes, node, 0),
+                    constant_argument(nodes, node, 1),
+                    constant_argument(nodes, node, 4),
+                );
+                reserve_range(
+                    &mut floor,
+                    constant_argument(nodes, node, 2),
+                    constant_argument(nodes, node, 3),
+                    constant_argument(nodes, node, 4),
+                );
+            }
+            _ => {}
+        }
+    }
+    floor.min(TEMPORARY_MEMORY_SLOTS)
+}
+
+fn stack_pointer_value(value: f64, label: &str) -> Result<usize> {
+    let pointer = integer(value, label)?;
+    usize::try_from(pointer)
+        .ok()
+        .filter(|pointer| *pointer <= TEMPORARY_MEMORY_SLOTS)
+        .with_context(|| format!("{label} must be within 0..={TEMPORARY_MEMORY_SLOTS}"))
+}
+
+fn approximate_operation_warning(name: &str) -> Option<(&'static str, &'static str)> {
+    match name {
+        "Random" | "RandomInteger" => Some((
+            "random",
+            "Compatibility warning: This engine uses Random/RandomInteger. Sono-Renderer executes them with deterministic SplitMix64, but the sequence and seeding may differ from the official Sonolus client.",
+        )),
+        "StreamSet" => Some((
+            "stream_set",
+            "Compatibility warning: This engine uses StreamSet. Sono-Renderer uses ordered replace-on-equal-key mutation shared with replay streams; callback and replay mutation semantics may differ from the official client.",
+        )),
+        "StackInit"
+        | "StackEnter"
+        | "StackLeave"
+        | "StackGrow"
+        | "StackPush"
+        | "StackPop"
+        | "StackGet"
+        | "StackSet"
+        | "StackGetFrame"
+        | "StackSetFrame"
+        | "StackGetPointer"
+        | "StackSetPointer"
+        | "StackGetFramePointer"
+        | "StackSetFramePointer" => Some((
+            "stack",
+            "Compatibility warning: This engine uses stack operations with partially undocumented pointer/frame behavior. Sono-Renderer applies a bounded Temporary Memory stack convention; rendering may differ from Sonolus.",
+        )),
+        _ => None,
+    }
+}
+
 fn modulus(left: f64, right: f64) -> Result<f64> {
     if right == 0.0 {
         bail!("modulus by zero");
@@ -4160,5 +5235,221 @@ mod memory_partition_tests {
         vm.set_accounting(false);
         assert_eq!(vm.execute(2).unwrap(), 10.0);
         assert!(vm.function_counts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod approximate_watch_operation_tests {
+    use super::{WatchCompatibilityPolicy, WatchOperationImplementation, WatchVm};
+    use crate::watch::EngineNode;
+    use serde_json::json;
+    use std::sync::{atomic::AtomicU64, Arc};
+
+    fn call(nodes: &mut Vec<EngineNode>, name: &str, values: &[f64]) -> usize {
+        let mut args = Vec::new();
+        for value in values {
+            args.push(nodes.len());
+            nodes.push(serde_json::from_value(json!({"value": value})).unwrap());
+        }
+        let index = nodes.len();
+        nodes.push(serde_json::from_value(json!({"func": name, "args": args})).unwrap());
+        index
+    }
+
+    fn vm_with_seed(nodes: &[EngineNode], seed: u64) -> WatchVm<'_> {
+        let mut vm = WatchVm::new(nodes);
+        vm.context.random_state = Arc::new(AtomicU64::new(seed));
+        vm
+    }
+
+    fn error_chain(error: anyhow::Error) -> String {
+        format!("{error:#}")
+    }
+
+    #[test]
+    fn every_stack_operation_uses_bounded_temporary_memory_and_balanced_frames() {
+        let mut nodes = Vec::new();
+        let init = call(&mut nodes, "StackInit", &[]);
+        let pointer = call(&mut nodes, "StackGetPointer", &[]);
+        let push = call(&mut nodes, "StackPush", &[17.0]);
+        let get = call(&mut nodes, "StackGet", &[0.0]);
+        let set = call(&mut nodes, "StackSet", &[0.0, 18.0]);
+        let pop = call(&mut nodes, "StackPop", &[]);
+        let grow = call(&mut nodes, "StackGrow", &[2.0]);
+        let set_pointer = call(&mut nodes, "StackSetPointer", &[4096.0]);
+        let enter = call(&mut nodes, "StackEnter", &[3.0]);
+        let frame_pointer = call(&mut nodes, "StackGetFramePointer", &[]);
+        let set_frame_pointer = call(&mut nodes, "StackSetFramePointer", &[4094.0]);
+        let set_frame = call(&mut nodes, "StackSetFrame", &[0.0, 42.0]);
+        let get_frame = call(&mut nodes, "StackGetFrame", &[0.0]);
+        let nested_enter = call(&mut nodes, "StackEnter", &[1.0]);
+        let nested_leave = call(&mut nodes, "StackLeave", &[]);
+        let leave = call(&mut nodes, "StackLeave", &[]);
+        let mut vm = WatchVm::new(&nodes);
+
+        assert_eq!(vm.execute(init).unwrap(), 0.0);
+        assert_eq!(vm.execute(pointer).unwrap(), 4096.0);
+        assert_eq!(vm.execute(push).unwrap(), 4095.0);
+        assert_eq!(vm.execute(get).unwrap(), 17.0);
+        assert_eq!(vm.execute(set).unwrap(), 0.0);
+        assert_eq!(vm.execute(pop).unwrap(), 18.0);
+        assert!(error_chain(vm.execute(pop).unwrap_err()).contains("underflow"));
+        assert_eq!(vm.execute(grow).unwrap(), 4094.0);
+        assert_eq!(vm.execute(set_pointer).unwrap(), 0.0);
+        assert_eq!(vm.execute(enter).unwrap(), 0.0);
+        assert_eq!(vm.execute(frame_pointer).unwrap(), 4093.0);
+        assert_eq!(vm.execute(set_frame_pointer).unwrap(), 0.0);
+        assert_eq!(vm.execute(set_frame).unwrap(), 0.0);
+        assert_eq!(vm.execute(get_frame).unwrap(), 42.0);
+        assert_eq!(vm.execute(nested_enter).unwrap(), 0.0);
+        assert_eq!(vm.execute(nested_leave).unwrap(), 0.0);
+        assert_eq!(vm.execute(leave).unwrap(), 0.0);
+        assert_eq!(vm.execute(pointer).unwrap(), 4096.0);
+        assert!(vm.take_compatibility_warnings().contains_key("stack"));
+
+        let mut bad_nodes = Vec::new();
+        let zero = call(&mut bad_nodes, "StackSetPointer", &[0.0]);
+        let push = call(&mut bad_nodes, "StackPush", &[1.0]);
+        let leave = call(&mut bad_nodes, "StackLeave", &[]);
+        let mut bad = WatchVm::new(&bad_nodes);
+        bad.execute(zero).unwrap();
+        assert!(error_chain(bad.execute(push).unwrap_err()).contains("capacity"));
+        assert!(error_chain(bad.execute(leave).unwrap_err()).contains("StackEnter"));
+
+        let mut collision_nodes = Vec::new();
+        let set_temp = call(&mut collision_nodes, "Set", &[10000.0, 4095.0, 91.0]);
+        let push = call(&mut collision_nodes, "StackPush", &[2.0]);
+        let mut collision = WatchVm::new(&collision_nodes);
+        collision.execute(set_temp).unwrap();
+        assert!(collision
+            .execute(push)
+            .map_err(error_chain)
+            .unwrap_err()
+            .contains("capacity"));
+        assert_eq!(collision.memory.get(10000, 4095), 91.0);
+        assert_eq!(
+            super::watch_operation_implementation("StackSetFramePointer"),
+            WatchOperationImplementation::Approximate
+        );
+    }
+
+    #[test]
+    fn cached_stack_floor_preserves_the_graph_analysis_result() {
+        let mut nodes = Vec::new();
+        let _set = call(&mut nodes, "Set", &[10000.0, 73.0, 1.0]);
+        let floor = super::temporary_memory_floor(&nodes);
+
+        let scanned = WatchVm::new(&nodes);
+        let cached = WatchVm::new_with_stack_floor(&nodes, floor);
+        assert_eq!(floor, 74);
+        assert_eq!(scanned.stack.stack_floor, cached.stack.stack_floor);
+    }
+
+    #[test]
+    fn random_operations_are_seeded_bounded_and_family_warned_once() {
+        let mut nodes = Vec::new();
+        let random = call(&mut nodes, "Random", &[-3.5, 7.25]);
+        let random_integer = call(&mut nodes, "RandomInteger", &[-5.0, 9.0]);
+        let roots = [random, random_integer, random, random_integer];
+        let mut first = vm_with_seed(&nodes, 1234);
+        let mut second = vm_with_seed(&nodes, 1234);
+        let first_values = roots.map(|root| first.execute(root).unwrap());
+        let second_values = roots.map(|root| second.execute(root).unwrap());
+        assert_eq!(first_values, second_values);
+        assert!(first_values[0] >= -3.5 && first_values[0] <= 7.25);
+        assert!(first_values[2] >= -3.5 && first_values[2] <= 7.25);
+        assert!(first_values[1] >= -5.0 && first_values[1] < 9.0);
+        assert_eq!(first_values[1].fract(), 0.0);
+        assert!(first_values[3] >= -5.0 && first_values[3] < 9.0);
+        assert_eq!(first.take_compatibility_warnings().len(), 1);
+
+        let mut invalid = Vec::new();
+        let reversed = call(&mut invalid, "Random", &[4.0, 3.0]);
+        let empty_integer = call(&mut invalid, "RandomInteger", &[3.0, 3.0]);
+        let mut invalid_vm = WatchVm::new(&invalid);
+        assert!(error_chain(invalid_vm.execute(reversed).unwrap_err()).contains("ordered"));
+        assert!(invalid_vm.execute(empty_integer).is_err());
+    }
+
+    #[test]
+    fn strict_policy_rejects_before_evaluating_approximate_arguments() {
+        let mut nodes = Vec::new();
+        let min = call(&mut nodes, "Add", &[0.0, 0.0]);
+        let max = call(&mut nodes, "StackPush", &[88.0]);
+        let random = nodes.len();
+        nodes.push(serde_json::from_value(json!({"func":"Random", "args":[min, max]})).unwrap());
+        let pointer = call(&mut nodes, "StackGetPointer", &[]);
+        let mut vm = WatchVm::new(&nodes);
+        vm.context.compatibility_policy = WatchCompatibilityPolicy::Strict;
+        assert!(
+            error_chain(vm.execute(random).unwrap_err()).contains("Random requires approximate")
+        );
+        assert_eq!(vm.stack.stack_pointer, 4096);
+        assert!(vm.take_compatibility_warnings().is_empty());
+
+        let mut permissive = WatchVm::new(&nodes);
+        assert!(permissive.execute(random).is_ok());
+        assert_eq!(permissive.execute(pointer).unwrap(), 4095.0);
+    }
+
+    #[test]
+    fn stream_set_upserts_sorted_replay_visible_values_and_returns_zero() {
+        let mut nodes = Vec::new();
+        let set_late = call(&mut nodes, "StreamSet", &[7.0, 3.0, 30.0]);
+        let set_early = call(&mut nodes, "StreamSet", &[7.0, 1.0, 10.0]);
+        let set_duplicate = call(&mut nodes, "StreamSet", &[7.0, 1.0, 12.0]);
+        let has = call(&mut nodes, "StreamHas", &[7.0, 1.0]);
+        let value = call(&mut nodes, "StreamGetValue", &[7.0, 2.0]);
+        let next = call(&mut nodes, "StreamGetNextKey", &[7.0, 1.0]);
+        let mut vm = WatchVm::new(&nodes);
+        assert_eq!(vm.execute(set_late).unwrap(), 0.0);
+        assert_eq!(vm.execute(set_early).unwrap(), 0.0);
+        assert_eq!(vm.execute(set_duplicate).unwrap(), 0.0);
+        assert_eq!(vm.execute(has).unwrap(), 1.0);
+        assert_eq!(vm.execute(value).unwrap(), 21.0);
+        assert_eq!(vm.execute(next).unwrap(), 3.0);
+        assert_eq!(
+            vm.context
+                .stream_entry_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+        assert_eq!(
+            vm.context.streams.read().unwrap()[&(7, 0)],
+            vec![(1.0, 12.0), (3.0, 30.0)]
+        );
+        assert_eq!(vm.take_compatibility_warnings().len(), 1);
+    }
+
+    #[test]
+    fn approximate_operations_are_not_compiled_into_sono_gcc_regions() {
+        let mut nodes = Vec::new();
+        for name in [
+            "Random",
+            "RandomInteger",
+            "StreamSet",
+            "StackInit",
+            "StackEnter",
+            "StackLeave",
+            "StackGrow",
+            "StackPush",
+            "StackPop",
+            "StackGet",
+            "StackSet",
+            "StackGetFrame",
+            "StackSetFrame",
+            "StackGetPointer",
+            "StackSetPointer",
+            "StackGetFramePointer",
+            "StackSetFramePointer",
+        ] {
+            call(&mut nodes, name, &[]);
+        }
+        let coverage = crate::sono_gcc::inspect_operation_coverage(&nodes);
+        assert!(coverage
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| nodes[*index].func.is_some())
+            .all(|(_, eligible)| !eligible));
     }
 }

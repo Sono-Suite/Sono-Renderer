@@ -3,7 +3,7 @@
 use crate::offline::FrameStageProfile;
 use std::{collections::BTreeMap, time::Duration};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimingSummary {
     pub total_ms: f64,
     pub mean_ms: f64,
@@ -75,11 +75,6 @@ pub(crate) struct ProfileCollector {
     preflight_sono_gcc_regions: u64,
     preflight_function_dispatches: u64,
     preflight_memory_entries: u64,
-    event_only_runtime_frames: u64,
-    event_only_output_frames: u64,
-    event_only_watch_callbacks: u64,
-    event_only_watch_evaluations: u64,
-    event_only_sono_gcc_regions: u64,
 }
 impl ProfileCollector {
     pub(crate) fn new(
@@ -124,11 +119,6 @@ impl ProfileCollector {
             preflight_sono_gcc_regions: 0,
             preflight_function_dispatches: 0,
             preflight_memory_entries: 0,
-            event_only_runtime_frames: 0,
-            event_only_output_frames: 0,
-            event_only_watch_callbacks: 0,
-            event_only_watch_evaluations: 0,
-            event_only_sono_gcc_regions: 0,
         }
     }
     pub(crate) fn begin_render(&mut self) {
@@ -160,6 +150,24 @@ impl ProfileCollector {
     }
     pub(crate) fn record(&mut self, name: &'static str, d: Duration) {
         self.timings.entry(name).or_default().push(d)
+    }
+    pub(crate) fn attribution_timings(&self) -> Vec<crate::performance::StageTiming> {
+        self.timings
+            .iter()
+            .filter_map(|(name, values)| {
+                let summary = summarize_durations(values)?;
+                Some(crate::performance::StageTiming {
+                    name: (*name).to_owned(),
+                    duration_ms: summary.total_ms,
+                    samples: values.len() as u64,
+                    semantics: crate::performance::StageSemantics::OverlappingAttribution,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn adapter_identity(&self) -> Option<String> {
+        self.adapter.clone()
     }
     pub(crate) fn record_frame(
         &mut self,
@@ -535,20 +543,6 @@ impl ProfileCollector {
             .unwrap_or_default();
         self.record("Preflight collector/wrapper", total.saturating_sub(frames));
     }
-    pub(crate) fn record_event_only(
-        &mut self,
-        runtime: &crate::watch_runtime::FrameRuntimeProfile,
-        loop_wall: Duration,
-    ) {
-        self.record("SFX event-only Watch runtime", runtime.frame);
-        self.record("SFX event-only Watch preprocess", runtime.preprocess);
-        self.record("SFX event-only render-loop wall", loop_wall);
-        self.event_only_runtime_frames += runtime.frame_count;
-        self.event_only_output_frames += 1;
-        self.event_only_watch_callbacks += runtime.callbacks;
-        self.event_only_watch_evaluations += runtime.evaluations;
-        self.event_only_sono_gcc_regions += runtime.sono_gcc_regions_executed;
-    }
     pub(crate) fn finish_stream_frame_profile(
         &mut self,
         wall: Duration,
@@ -619,7 +613,9 @@ impl ProfileCollector {
             );
         }
         let n = self.frame_count.max(1) as f64;
-        eprintln!("GPU execution timestamp: not collected (no additional query/readback added)\nEntities/frame: {:.1}\nSkin draws/frame: {:.1}\nParticle draws/frame: {:.1}\nGPU draws/frame: {:.1}\nAtlas uploads/cache misses: {}\nReadback/frame: {:.0} bytes\nStreaming runtime frames/callbacks/evaluations: {}/{} / {}\nEvent-only output frames/runtime frames/callbacks/evaluations: {}/{}/{}/{}\nEvent-only prepass GPU frames: 0\nFull-validation runtime frames/callbacks/evaluations: {}/{} / {}",self.entities as f64/n,self.skin_draws as f64/n,self.particles as f64/n,self.gpu_draws as f64/n,self.atlas_uploads,self.readback_bytes as f64/n,self.stream_runtime_frames,self.stream_watch_callbacks,self.stream_watch_evaluations,self.event_only_output_frames,self.event_only_runtime_frames,self.event_only_watch_callbacks,self.event_only_watch_evaluations,self.preflight_runtime_frames,self.preflight_watch_callbacks,self.preflight_watch_evaluations);
+        // These legacy report slots remain visible as zero for profiling-output
+        // compatibility. Normal exports no longer run an event-only Watch pass.
+        eprintln!("GPU execution timestamp: not collected (no additional query/readback added)\nEntities/frame: {:.1}\nSkin draws/frame: {:.1}\nParticle draws/frame: {:.1}\nGPU draws/frame: {:.1}\nAtlas uploads/cache misses: {}\nReadback/frame: {:.0} bytes\nStreaming runtime frames/callbacks/evaluations: {}/{} / {}\nEvent-only output frames/runtime frames/callbacks/evaluations: {}/{}/{}/{}\nEvent-only prepass GPU frames: 0\nFull-validation runtime frames/callbacks/evaluations: {}/{} / {}",self.entities as f64/n,self.skin_draws as f64/n,self.particles as f64/n,self.gpu_draws as f64/n,self.atlas_uploads,self.readback_bytes as f64/n,self.stream_runtime_frames,self.stream_watch_callbacks,self.stream_watch_evaluations,0,0,0,0,self.preflight_runtime_frames,self.preflight_watch_callbacks,self.preflight_watch_evaluations);
         let worker_utilization = self.parallel_worker_busy.as_secs_f64()
             / self
                 .parallel_worker_slot_time
@@ -639,9 +635,7 @@ impl ProfileCollector {
         );
         eprintln!(
             "Sono-GCC scalar regions executed: stream={} event-only={} full-validation={}",
-            self.stream_sono_gcc_regions,
-            self.event_only_sono_gcc_regions,
-            self.preflight_sono_gcc_regions
+            self.stream_sono_gcc_regions, 0, self.preflight_sono_gcc_regions
         );
         let render = self
             .timings

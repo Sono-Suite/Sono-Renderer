@@ -23,7 +23,7 @@ pub struct ChartEnd {
 }
 
 pub(crate) fn discover(
-    mut session: EventSession<'_>,
+    session: &mut EventSession<'_>,
     _fps: u32,
     bgm_end: Option<f64>,
     assets: &EffectAssets,
@@ -382,10 +382,12 @@ mod tests {
             return;
         };
         let bgm = repo.join("TestingSuite/Next Sekai Engine/levels/Various Artists - Baumkuchen x Retry Now/ANIMATION_VIDIO_Baumkuchen_and_Credits_X_Retry_Now_Sub_English_and_jangan_NAKISO_amaamala_1789700599.mp3");
-        let bgm_end = crate::export_media::source_duration(&tools, &bgm).unwrap()
-            - level.bgm_offset.unwrap_or(0.0);
+        let bgm_end = crate::export_timeline::media_to_watch_time(
+            crate::export_media::source_duration(&tools, &bgm).unwrap(),
+            level.bgm_offset.unwrap_or(0.0),
+        );
         for fps in [12, 30, 60] {
-            let session = EventSession::new_configured(
+            let mut session = EventSession::new_configured(
                 &package.watch,
                 &package.rom,
                 &package.configuration,
@@ -405,7 +407,7 @@ mod tests {
             )
             .unwrap();
             let end = discover(
-                session,
+                &mut session,
                 fps,
                 Some(bgm_end),
                 &assets,

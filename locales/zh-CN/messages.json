@@ -1,0 +1,16 @@
+{
+  "app.name":"Sono-Renderer","language.title":"应用语言","language.description":"选择 Sono-Renderer 界面使用的语言。此操作不会更改项目或创作内容。","language.review_notice":"译文为机器起草，尚未经过人工语言审校。",
+  "nav.home":"主页","nav.quick_render":"快速渲染","nav.chart_studio":"谱面工作室","nav.presentation_studio":"视频工作室","nav.production":"任务与历史","nav.tools":"工具","nav.settings":"设置","nav.diagnostics":"诊断",
+  "home.title.welcome":"欢迎使用 Sono-Renderer","home.title.home":"Sono-Renderer 主页","home.question":"你想做什么？","home.intro":"选择一个目标。此应用支持 Sonolus 渲染、谱面创作和独立视频编辑。",
+  "home.render.title":"渲染关卡","home.render.body":"选择引擎、关卡、资源和可选音乐，然后生成 MP4。项目文件和高级设置均为可选。","home.render.action":"开始快速渲染",
+  "home.chart.title":"创建 / 编辑谱面","home.chart.body":"打开或创建 LevelData，编辑实体，使用所选引擎预览、验证并导出。","home.chart.action":"打开谱面工作室",
+  "home.video.title":"编辑视频","home.video.body":"编辑普通视频、音频、图像和标题。无需 Sonolus 内容。","home.video.action":"打开视频工作室",
+  "home.project.title":"打开项目","home.project.body":"继续处理已保存的渲染输入项目或视频合成项目。","home.project.render":"渲染项目…","home.project.video":"视频合成…",
+  "home.learn.title":"了解使用方法","home.learn.body":"查找此版本工作流程的简短指南。","home.learn.action":"入门与帮助",
+  "common.skip":"暂时跳过","common.help":"帮助","common.cancel":"取消","common.save":"保存","common.clear":"清除","common.open":"打开","common.export":"导出","common.undo":"撤销","common.redo":"重做","common.search":"搜索","common.loading":"正在加载…","common.saved":"已保存","common.modified":"已修改",
+  "quick.title":"快速渲染","quick.description":"从 Sonolus 关卡制作视频。项目文件和高级设置均为可选。","quick.check_inputs":"检查输入","quick.render":"渲染",
+  "chart.title":"谱面工作室","chart.description":"创作谱面数据，使用所选引擎预览、验证并导出标准 LevelData。","chart.generic_mode":"通用 / 原始数据编辑模式","chart.raw_notice":"字段名以数据路径显示。工作室不会猜测玩法含义、时间、布局或实体关系。","chart.inspect_engine":"检查所选引擎","chart.export_level":"导出 LevelData",
+  "presentation.title":"视频工作室","presentation.description":"无需加载引擎、LevelData、Watch 或 Sono-GCC，即可编辑普通媒体。","presentation.media":"媒体","presentation.timeline":"时间线","presentation.inspector":"检查器","presentation.export":"导出视频",
+  "settings.title":"设置","settings.language":"语言","settings.translation_review":"翻译审校状态","help.title":"入门与帮助",
+  "command.app.home":"主页","command.workspace.quick_render":"渲染关卡","command.workspace.chart_studio":"创建或编辑谱面","command.workspace.presentation_studio":"编辑视频","command.app.production":"任务与历史","command.app.tools":"工具与分析","command.app.settings":"设置","command.app.diagnostics":"诊断"
+}
