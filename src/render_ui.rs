@@ -424,6 +424,10 @@ pub enum UiElementKind {
         suffix: String,
         #[serde(default)]
         digits: usize,
+        /// Optional right-side digit limit, matching displays such as the
+        /// Sono-Overlay combo's configurable `last_digit` setting.
+        #[serde(default)]
+        max_digits: Option<usize>,
         #[serde(default = "default_ui_text_color")]
         color: [u8; 4],
         #[serde(default = "default_ui_font_size")]
@@ -507,6 +511,16 @@ pub enum UiTextAlign {
     Right,
 }
 
+/// Blend operation for a UI element's output. This currently keeps the
+/// normal alpha path and the additive path used by the Sono-Overlay combo pop.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiBlendMode {
+    #[default]
+    Normal,
+    Add,
+}
+
 /// Ordered state-driven overrides. Later matching rules replace earlier values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UiStyleRule {
@@ -530,7 +544,19 @@ pub struct UiElement {
     pub enabled: bool,
     pub z_index: i32,
     pub opacity: f64,
+    /// Optional compositing mode; normal alpha blending remains the default.
+    #[serde(default)]
+    pub blend_mode: UiBlendMode,
+    /// Elements sharing a group are rendered into one transparent surface
+    /// before that surface is composited onto the frame. This preserves local
+    /// blend semantics such as Sono-Overlay's additive combo pop.
+    #[serde(default)]
+    pub isolation_group: Option<String>,
     pub layout: UiLayout,
+    /// Optional reference-layout group used when a profile supplies responsive
+    /// group positions (for example, distinct Sono-Overlay 16:9 and 4:3 layouts).
+    #[serde(default)]
+    pub responsive_group: Option<String>,
     pub visible_when: Option<UiCondition>,
     pub animations: Vec<UiAnimation>,
     pub style_rules: Vec<UiStyleRule>,
@@ -546,7 +572,10 @@ impl Default for UiElement {
             enabled: true,
             z_index: 0,
             opacity: 1.0,
+            blend_mode: UiBlendMode::Normal,
+            isolation_group: None,
             layout: UiLayout::default(),
+            responsive_group: None,
             visible_when: None,
             animations: Vec::new(),
             style_rules: Vec::new(),
@@ -572,6 +601,24 @@ pub struct UiBitmapFont {
     /// Per-glyph image assets keyed by the exact character they render.
     #[serde(default)]
     pub glyph_assets: BTreeMap<String, String>,
+    /// Optional relative scale for image-backed glyphs with intentionally
+    /// different source canvas dimensions. Unspecified characters use 1.0.
+    #[serde(default)]
+    pub glyph_scales: BTreeMap<String, f64>,
+    /// Optional per-glyph advance factors, expressed as a fraction of that
+    /// glyph's measured width.
+    #[serde(default)]
+    pub glyph_advances: BTreeMap<String, f64>,
+    /// Optional fixed distance between glyph centers, in reference-canvas
+    /// pixels. This models image-based counters whose source layout positions
+    /// each glyph around a shared center rather than flowing glyph advances.
+    #[serde(default)]
+    pub center_spacing: Option<f64>,
+    /// Maximum decode dimension for image-backed glyphs. Most interface glyphs
+    /// remain capped at 128 px; reference artwork can opt into its native
+    /// source resolution when downsampling would change the rendered pixels.
+    #[serde(default)]
+    pub glyph_max_dimension: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1083,6 +1130,11 @@ pub struct RendererUiConfig {
     pub intentionally_empty: bool,
     pub design_size: [u32; 2],
     pub fit: UiFitMode,
+    /// Source-derived alternate canvas layouts. Group centers are expressed
+    /// in their respective reference pixel coordinates; `alternate_scale`
+    /// is relative to the profile's primary reference group scale.
+    #[serde(default)]
+    pub responsive_layouts: BTreeMap<String, UiResponsiveLayout>,
     pub elements: Vec<UiElement>,
     pub variables: BTreeMap<String, UiExpression>,
     /// Generic deterministic profile timeline for numeric and categorical values.
@@ -1126,6 +1178,42 @@ pub struct RendererUiConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+pub struct UiResponsiveLayout {
+    pub reference_size: [u32; 2],
+    pub alternate_size: [u32; 2],
+    pub groups: BTreeMap<String, UiResponsiveGroup>,
+}
+
+impl Default for UiResponsiveLayout {
+    fn default() -> Self {
+        Self {
+            reference_size: [1920, 1080],
+            alternate_size: [1440, 1080],
+            groups: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct UiResponsiveGroup {
+    pub reference_center: [f64; 2],
+    pub alternate_center: [f64; 2],
+    pub alternate_scale: f64,
+}
+
+impl Default for UiResponsiveGroup {
+    fn default() -> Self {
+        Self {
+            reference_center: [0.0; 2],
+            alternate_center: [0.0; 2],
+            alternate_scale: 1.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct UiTheme {
     pub panel: [u8; 3],
     pub panel_alpha: u8,
@@ -1153,6 +1241,7 @@ struct BuiltInUiProfileSeed {
     profile_name: String,
     design_size: [u32; 2],
     fit: UiFitMode,
+    responsive_layouts: BTreeMap<String, UiResponsiveLayout>,
     elements: Vec<UiElement>,
     variables: BTreeMap<String, UiExpression>,
     timeline: UiTimeline,
@@ -1196,6 +1285,11 @@ fn built_in_ui_profile_seed() -> &'static BuiltInUiProfileSeed {
                 .to_owned(),
             design_size: decode_builtin_ui_field(&document, "design_size", [1920, 1080]),
             fit: decode_builtin_ui_field(&document, "fit", UiFitMode::Contain),
+            responsive_layouts: decode_builtin_ui_field(
+                &document,
+                "responsive_layouts",
+                BTreeMap::new(),
+            ),
             elements: decode_builtin_ui_field(&document, "elements", Vec::new()),
             variables: decode_builtin_ui_field(&document, "variables", BTreeMap::new()),
             timeline: decode_builtin_ui_field(&document, "timeline", UiTimeline::default()),
@@ -1247,11 +1341,12 @@ impl RendererUiConfig {
         let resource_root = crate::store_paths::application_resource_root();
         Self {
             mode: GameplayUiMode::Custom,
-            enabled: false,
+            enabled: true,
             profile_name: seed.profile_name.clone(),
             intentionally_empty: false,
             design_size: seed.design_size,
             fit: seed.fit,
+            responsive_layouts: seed.responsive_layouts.clone(),
             elements: seed.elements.clone(),
             variables: seed.variables.clone(),
             timeline: seed.timeline.clone(),
@@ -1288,6 +1383,7 @@ impl Default for RendererUiConfig {
             intentionally_empty: false,
             design_size: [1920, 1080],
             fit: UiFitMode::Contain,
+            responsive_layouts: BTreeMap::new(),
             elements: Vec::new(),
             variables: BTreeMap::new(),
             timeline: UiTimeline::default(),
@@ -1498,6 +1594,7 @@ pub fn default_gameplay_ui_elements(
                     prefix: String::new(),
                     suffix: String::new(),
                     digits: 0,
+                    max_digits: None,
                     color: [255, 255, 255, 255],
                     font_size,
                     font: font.map(str::to_owned),
@@ -1554,6 +1651,7 @@ pub fn default_gameplay_ui_elements(
                     prefix: String::new(),
                     suffix: String::new(),
                     digits: 0,
+                    max_digits: None,
                     color: [255, 255, 255, 255],
                     font_size,
                     font: font.map(str::to_owned),
@@ -1669,6 +1767,7 @@ impl RendererUiConfig {
         self.intentionally_empty = false;
         self.design_size = profile.design_size;
         self.fit = profile.fit;
+        self.responsive_layouts = profile.responsive_layouts;
         self.elements = profile.elements;
         self.variables = profile.variables;
         self.timeline = profile.timeline;
@@ -2097,6 +2196,10 @@ impl RendererUiConfig {
                         advance: 1.0,
                         glyph_map: BTreeMap::new(),
                         glyph_assets,
+                        glyph_scales: BTreeMap::new(),
+                        glyph_advances: BTreeMap::new(),
+                        center_spacing: None,
+                        glyph_max_dimension: None,
                     },
                 );
             }
@@ -2218,11 +2321,17 @@ impl RendererUiConfig {
             .as_ref()
             .map(crate::presentation_assets::PresentationAssetPack::load)
             .transpose()?;
-        let glyph_asset_ids: BTreeSet<_> = self
-            .fonts
-            .values()
-            .flat_map(|font| font.glyph_assets.values().cloned())
-            .collect();
+        let mut glyph_asset_max_dimensions = BTreeMap::<String, u32>::new();
+        for font in self.fonts.values() {
+            let max_dimension = font.glyph_max_dimension.unwrap_or(128);
+            for asset in font.glyph_assets.values() {
+                glyph_asset_max_dimensions
+                    .entry(asset.clone())
+                    .and_modify(|current| *current = (*current).max(max_dimension))
+                    .or_insert(max_dimension);
+            }
+        }
+        let glyph_asset_ids: BTreeSet<_> = glyph_asset_max_dimensions.keys().cloned().collect();
         let mut required_asset_ids = glyph_asset_ids.clone();
         collect_ui_element_assets(&self.elements, &mut required_asset_ids);
         for (id, path) in &self.assets {
@@ -2301,11 +2410,7 @@ impl RendererUiConfig {
                     anyhow::anyhow!("decoding gameplay UI asset {}: {error}", resolved.display())
                 })?
                 .to_rgba8();
-            let max_dimension = if glyph_asset_ids.contains(id) {
-                128
-            } else {
-                1024
-            };
+            let max_dimension = glyph_asset_max_dimensions.get(id).copied().unwrap_or(1024);
             let (source_width, source_height) = image.dimensions();
             if source_width.max(source_height) > max_dimension {
                 let scale = f64::from(max_dimension) / f64::from(source_width.max(source_height));
@@ -2335,6 +2440,18 @@ impl RendererUiConfig {
                 || font.columns == 0
                 || !font.advance.is_finite()
                 || font.advance <= 0.0
+                || font.glyph_scales.iter().any(|(glyph, scale)| {
+                    glyph.chars().count() != 1 || !scale.is_finite() || *scale <= 0.0
+                })
+                || font.glyph_advances.iter().any(|(glyph, advance)| {
+                    glyph.chars().count() != 1 || !advance.is_finite() || *advance <= 0.0
+                })
+                || font
+                    .center_spacing
+                    .is_some_and(|spacing| !spacing.is_finite() || spacing <= 0.0)
+                || font
+                    .glyph_max_dimension
+                    .is_some_and(|dimension| !(1..=4096).contains(&dimension))
                 || (font.asset.is_empty() && font.glyph_assets.is_empty())
             {
                 bail!("gameplay UI font {name:?} has invalid glyph dimensions or advance");
@@ -2408,7 +2525,10 @@ impl RendererUiConfig {
             .scoring
             .as_ref()
             .map(|scoring| scoring.source)
-            .unwrap_or(UiScoringSource::Disabled)
+            // An omitted optional scoring block is the standard automatic
+            // behavior for older and minimal profiles. Explicit Disabled
+            // remains available as an opt-out.
+            .unwrap_or(UiScoringSource::Automatic)
         {
             UiScoringSource::Automatic if self.events_file.is_some() => UiScoringSource::EventTrack,
             UiScoringSource::Automatic => UiScoringSource::SonoOverlay,
@@ -2423,13 +2543,6 @@ impl RendererUiConfig {
         self.loaded_forecast = None;
         self.scoring_status = None;
         self.scoring_diagnostics.clear();
-        let Some(scoring) = self.scoring.as_ref() else {
-            if self.events_file.is_some() {
-                self.scoring_status =
-                    Some("Event track selected, but no event-to-HUD rules are configured.".into());
-            }
-            return;
-        };
         match self.resolved_scoring_source() {
             UiScoringSource::Disabled => {
                 self.scoring_status = Some("Gameplay scoring is disabled.".into());
@@ -2437,15 +2550,23 @@ impl RendererUiConfig {
             UiScoringSource::EventTrack => {
                 self.scoring_status = Some(if self.events_file.is_some() {
                     format!(
-                        "Event track selected ({} events loaded).",
+                        "Gameplay values: Manually loaded event track ({} events loaded).",
                         self.loaded_events.len()
                     )
                 } else {
-                    "Event track selected, but no event file is configured.".into()
+                    "Gameplay values: Event track selected, but no event file is configured.".into()
                 });
             }
             UiScoringSource::SonoOverlay => {
-                match crate::sono_overlay_scoring::simulate(level, &scoring.forecast) {
+                // An absent scoring block uses the canonical default forecast;
+                // explicit Disabled remains handled above.
+                let default_forecast = crate::sono_overlay_scoring::ForecastConfig::default();
+                let forecast_config = self
+                    .scoring
+                    .as_ref()
+                    .map(|scoring| &scoring.forecast)
+                    .unwrap_or(&default_forecast);
+                match crate::sono_overlay_scoring::simulate(level, forecast_config) {
                     Ok(forecast) => {
                         let rating_source = match forecast.rating_source {
                             crate::sono_overlay_scoring::RatingSource::UserOverride => {
@@ -2463,13 +2584,13 @@ impl RendererUiConfig {
                             .count();
                         self.scoring_status = Some(if incomplete_count > 0 {
                             format!(
-                                "Scoring: best effort — {incomplete_count} unrecognized archetype{} skipped. Effective level rating {:.1} ({rating_source}); recognized notes remain active, but the forecast may be incomplete.",
+                                "Gameplay values: Auto-generated All Perfect (best effort; {incomplete_count} unrecognized archetype{} skipped). Effective level rating {:.1} ({rating_source}); recognized notes remain active, but the forecast may be incomplete.",
                                 if incomplete_count == 1 { "" } else { "s" },
                                 forecast.level_rating,
                             )
                         } else {
                             format!(
-                                "Sono-Overlay all-perfect forecast: {} recognized notes; {:.3} total weight. Effective level rating {:.1} ({rating_source}). This is not recorded player performance.",
+                                "Gameplay values: Auto-generated All Perfect ({} recognized notes; {:.3} total weight). Effective level rating {:.1} ({rating_source}). This is not recorded player performance.",
                                 forecast.supported_notes,
                                 forecast.weighted_note_count,
                                 forecast.level_rating,
@@ -2538,6 +2659,10 @@ impl RendererUiConfig {
             ("score_progress".into(), frame.score_progress),
             ("rank_code".into(), frame.rank_code),
             ("score_delta".into(), frame.score_delta),
+            // The reference HUD's transient score-award element is keyed by
+            // the per-event score offset. Keep the profile's public name
+            // while sourcing it from the forecast's authoritative delta.
+            ("score_bonus".into(), frame.score_delta),
             ("note_weight".into(), frame.note_weight),
             (
                 "skill_active".into(),
@@ -2648,6 +2773,27 @@ impl RendererUiConfig {
         if self.design_size[0] == 0 || self.design_size[1] == 0 {
             bail!("gameplay UI design size must be nonzero");
         }
+        for (name, layout) in &self.responsive_layouts {
+            if name.trim().is_empty()
+                || layout.reference_size.contains(&0)
+                || layout.alternate_size.contains(&0)
+                || layout.groups.iter().any(|(group_name, group)| {
+                    group_name.trim().is_empty()
+                        || group
+                            .reference_center
+                            .iter()
+                            .any(|value| !value.is_finite())
+                        || group
+                            .alternate_center
+                            .iter()
+                            .any(|value| !value.is_finite())
+                        || !group.alternate_scale.is_finite()
+                        || group.alternate_scale <= 0.0
+                })
+            {
+                bail!("gameplay UI responsive layout {name:?} is invalid");
+            }
+        }
         if self.timeline.tracks.len() > 4096 {
             bail!("gameplay UI timeline exceeds the 4096-track limit");
         }
@@ -2713,6 +2859,18 @@ impl RendererUiConfig {
                 || font.columns == 0
                 || !font.advance.is_finite()
                 || font.advance <= 0.0
+                || font.glyph_scales.iter().any(|(glyph, scale)| {
+                    glyph.chars().count() != 1 || !scale.is_finite() || *scale <= 0.0
+                })
+                || font.glyph_advances.iter().any(|(glyph, advance)| {
+                    glyph.chars().count() != 1 || !advance.is_finite() || *advance <= 0.0
+                })
+                || font
+                    .center_spacing
+                    .is_some_and(|spacing| !spacing.is_finite() || spacing <= 0.0)
+                || font
+                    .glyph_max_dimension
+                    .is_some_and(|dimension| !(1..=4096).contains(&dimension))
                 || (font.asset.is_empty() && font.glyph_assets.is_empty())
                 || (!font.asset.is_empty() && !self.assets.contains_key(&font.asset))
                 || font.glyph_assets.iter().any(|(glyph, asset)| {
@@ -2891,6 +3049,17 @@ fn validate_element(
     if element.id.trim().is_empty() || !ids.insert(element.id.clone()) {
         bail!(
             "gameplay UI element ids must be nonempty and unique: {:?}",
+            element.id
+        );
+    }
+    if element.responsive_group.as_ref().is_some_and(|group| {
+        !config
+            .responsive_layouts
+            .values()
+            .any(|layout| layout.groups.contains_key(group))
+    }) {
+        bail!(
+            "gameplay UI element {:?} references a missing responsive layout group",
             element.id
         );
     }
@@ -3451,26 +3620,7 @@ fn render_custom_ui(
     let design_h = f64::from(config.design_size[1]);
     let output_w = f64::from(width);
     let output_h = f64::from(height);
-    let (scale_x, scale_y) = match config.fit {
-        UiFitMode::Stretch => (output_w / design_w, output_h / design_h),
-        UiFitMode::Contain | UiFitMode::Cover => {
-            let scale = if config.fit == UiFitMode::Contain {
-                (output_w / design_w).min(output_h / design_h)
-            } else {
-                (output_w / design_w).max(output_h / design_h)
-            };
-            (scale, scale)
-        }
-    };
-    let root = UiMatrix {
-        a: scale_x,
-        b: 0.0,
-        c: 0.0,
-        d: scale_y,
-        tx: (output_w - design_w * scale_x) * 0.5,
-        ty: (output_h - design_h * scale_y) * 0.5,
-        opacity: 1.0,
-    };
+    let root = ui_root_matrix(output_w, output_h, config.design_size, config.fit);
     let screen = UiRect {
         x: 0.0,
         y: 0.0,
@@ -3479,10 +3629,206 @@ fn render_custom_ui(
     };
     let mut ordered: Vec<_> = config.elements.iter().enumerate().collect();
     ordered.sort_by_key(|(_, element)| element.z_index);
+    let mut rendered_isolation_groups = std::collections::BTreeSet::new();
     for (_, element) in ordered {
-        render_element(rgb, width, height, config, state, element, screen, root, 0)?;
+        if let Some(group_name) = element.isolation_group.as_deref() {
+            let group_last_z = config
+                .elements
+                .iter()
+                .filter(|candidate| candidate.isolation_group.as_deref() == Some(group_name))
+                .map(|candidate| candidate.z_index)
+                .max()
+                .unwrap_or(element.z_index);
+            if element.z_index != group_last_z {
+                continue;
+            }
+            if !rendered_isolation_groups.insert(group_name.to_owned()) {
+                continue;
+            }
+            let mut group: Vec<_> = config
+                .elements
+                .iter()
+                .filter(|candidate| candidate.isolation_group.as_deref() == Some(group_name))
+                .collect();
+            group.sort_by_key(|candidate| candidate.z_index);
+            render_isolated_ui_group(rgb, width, height, config, state, &group, screen, root)?;
+            continue;
+        }
+        let element_root = element.responsive_group.as_deref().map_or(root, |group| {
+            responsive_group_matrix(config, group, output_w, output_h, root)
+        });
+        render_element(
+            rgb,
+            width,
+            height,
+            config,
+            state,
+            element,
+            screen,
+            element_root,
+            None,
+            0,
+        )?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_isolated_ui_group(
+    rgb: &mut [u8],
+    width: u32,
+    height: u32,
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+    elements: &[&UiElement],
+    screen: UiRect,
+    root: UiMatrix,
+) -> Result<()> {
+    let mut bounds = None;
+    for element in elements {
+        let element_root = element.responsive_group.as_deref().map_or(root, |group| {
+            responsive_group_matrix(config, group, f64::from(width), f64::from(height), root)
+        });
+        collect_element_output_bounds(
+            element,
+            screen,
+            element_root,
+            config,
+            state,
+            width,
+            height,
+            &mut bounds,
+            0,
+        );
+    }
+    let Some((left, top, right, bottom)) = bounds else {
+        return Ok(());
+    };
+    let isolated_width = (right - left) as u32;
+    let isolated_height = (bottom - top) as u32;
+    let mut isolated_rgb = vec![0; isolated_width as usize * isolated_height as usize * 3];
+    let mut isolated_alpha = vec![0; isolated_width as usize * isolated_height as usize];
+    for element in elements {
+        let mut element_root = element.responsive_group.as_deref().map_or(root, |group| {
+            responsive_group_matrix(config, group, f64::from(width), f64::from(height), root)
+        });
+        element_root.tx -= f64::from(left);
+        element_root.ty -= f64::from(top);
+        render_element(
+            &mut isolated_rgb,
+            isolated_width,
+            isolated_height,
+            config,
+            state,
+            element,
+            screen,
+            element_root,
+            Some(&mut isolated_alpha),
+            0,
+        )?;
+    }
+    for (index, (pixel, alpha)) in isolated_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(isolated_alpha.iter().copied())
+        .enumerate()
+    {
+        if alpha == 0 {
+            continue;
+        }
+        let local_x = index % isolated_width as usize;
+        let local_y = index / isolated_width as usize;
+        let target_x = left as usize + local_x;
+        let target_y = top as usize + local_y;
+        let offset = (target_y * width as usize + target_x) * 3;
+        let inverse_alpha = 255_u16 - u16::from(alpha);
+        for channel in 0..3 {
+            rgb[offset + channel] = (u16::from(pixel[channel])
+                + (u16::from(rgb[offset + channel]) * inverse_alpha + 127) / 255)
+                .min(255) as u8;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_element_output_bounds(
+    element: &UiElement,
+    parent: UiRect,
+    parent_matrix: UiMatrix,
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+    width: u32,
+    height: u32,
+    output_bounds: &mut Option<(i32, i32, i32, i32)>,
+    depth: usize,
+) {
+    if depth > 32
+        || !element.enabled
+        || element
+            .visible_when
+            .as_ref()
+            .is_some_and(|condition| !evaluate_condition(condition, config, state))
+    {
+        return;
+    }
+    let style_opacity = element
+        .style_rules
+        .iter()
+        .filter(|style| evaluate_condition(&style.when, config, state))
+        .filter_map(|style| style.opacity)
+        .next_back()
+        .unwrap_or(1.0);
+    let (rect, world) =
+        element_geometry(element, parent, parent_matrix, config, state, style_opacity);
+    if let Some((left, top, right, bottom)) = transformed_bounds(world, rect, width, height) {
+        *output_bounds = Some(match *output_bounds {
+            Some((min_x, min_y, max_x, max_y)) => (
+                min_x.min(left),
+                min_y.min(top),
+                max_x.max(right),
+                max_y.max(bottom),
+            ),
+            None => (left, top, right, bottom),
+        });
+    }
+    let pad = element.layout.padding;
+    let child_parent = UiRect {
+        x: pad[0] * rect.width,
+        y: pad[1] * rect.height,
+        width: (1.0 - pad[0] - pad[2]).max(0.0) * rect.width,
+        height: (1.0 - pad[1] - pad[3]).max(0.0) * rect.height,
+    };
+    let mut children: Vec<_> = element.children.iter().enumerate().collect();
+    children.sort_by_key(|(_, child)| child.z_index);
+    let mut flow_cursor = 0.0;
+    for (_, child) in children {
+        let mut child = child.clone();
+        if let Some(flow) = &element.layout.flow {
+            match flow.direction {
+                UiFlowDirection::Row => {
+                    child.layout.x = flow_cursor;
+                    flow_cursor += child.layout.width + flow.gap;
+                }
+                UiFlowDirection::Column => {
+                    child.layout.y = flow_cursor;
+                    flow_cursor += child.layout.height + flow.gap;
+                }
+            }
+        }
+        collect_element_output_bounds(
+            &child,
+            child_parent,
+            world,
+            config,
+            state,
+            width,
+            height,
+            output_bounds,
+            depth + 1,
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3502,6 +3848,7 @@ struct UiMatrix {
     tx: f64,
     ty: f64,
     opacity: f64,
+    blend_mode: UiBlendMode,
 }
 
 impl UiMatrix {
@@ -3514,6 +3861,11 @@ impl UiMatrix {
             tx: self.a * other.tx + self.c * other.ty + self.tx,
             ty: self.b * other.tx + self.d * other.ty + self.ty,
             opacity: self.opacity * other.opacity,
+            blend_mode: if other.blend_mode == UiBlendMode::Normal {
+                self.blend_mode
+            } else {
+                other.blend_mode
+            },
         }
     }
 
@@ -3531,6 +3883,150 @@ impl UiMatrix {
     }
 }
 
+fn element_geometry(
+    element: &UiElement,
+    parent: UiRect,
+    parent_matrix: UiMatrix,
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+    style_opacity: f64,
+) -> (UiRect, UiMatrix) {
+    let mut bounds = layout_rect(&element.layout, parent);
+    let (opacity, offset_x, offset_y, scale_x, scale_y, rotation) =
+        animation_values(element, config, state);
+    bounds.x += offset_x;
+    bounds.y += offset_y;
+    let anchor = anchor_fraction(element.layout.anchor);
+    let origin_x = bounds.x - bounds.width * anchor[0];
+    let origin_y = bounds.y - bounds.height * anchor[1];
+    let center_x = bounds.width * 0.5;
+    let center_y = bounds.height * 0.5;
+    let angle = (element.layout.rotation + rotation).to_radians();
+    let cos = angle.cos();
+    let sin = angle.sin();
+    let local = UiMatrix {
+        // Animation scale belongs in the element transform. Scaling only the
+        // layout rectangle changes the alignment box, but bitmap-font glyphs
+        // are sized from `font_size` and therefore remain visually static.
+        // Apply it to the affine matrix around the anchor so text, counters,
+        // images, and groups all receive the same actual transform.
+        a: cos * element.layout.scale[0] * scale_x,
+        b: sin * element.layout.scale[0] * scale_x,
+        c: -sin * element.layout.scale[1] * scale_y,
+        d: cos * element.layout.scale[1] * scale_y,
+        tx: origin_x + center_x - cos * element.layout.scale[0] * scale_x * center_x
+            + sin * element.layout.scale[1] * scale_y * center_y,
+        ty: origin_y + center_y
+            - sin * element.layout.scale[0] * scale_x * center_x
+            - cos * element.layout.scale[1] * scale_y * center_y,
+        opacity: (element.opacity * opacity * style_opacity).clamp(0.0, 1.0),
+        blend_mode: element.blend_mode,
+    };
+    let world = parent_matrix.compose(local);
+    let rect = UiRect {
+        x: 0.0,
+        y: 0.0,
+        width: bounds.width,
+        height: bounds.height,
+    };
+    (rect, world)
+}
+
+fn ui_root_matrix(output_w: f64, output_h: f64, design_size: [u32; 2], fit: UiFitMode) -> UiMatrix {
+    let design_w = f64::from(design_size[0]);
+    let design_h = f64::from(design_size[1]);
+    let (scale_x, scale_y) = match fit {
+        UiFitMode::Stretch => (output_w / design_w, output_h / design_h),
+        UiFitMode::Contain | UiFitMode::Cover => {
+            let scale = if fit == UiFitMode::Contain {
+                (output_w / design_w).min(output_h / design_h)
+            } else {
+                (output_w / design_w).max(output_h / design_h)
+            };
+            (scale, scale)
+        }
+    };
+    UiMatrix {
+        a: scale_x,
+        b: 0.0,
+        c: 0.0,
+        d: scale_y,
+        tx: (output_w - design_w * scale_x) * 0.5,
+        ty: (output_h - design_h * scale_y) * 0.5,
+        opacity: 1.0,
+        blend_mode: UiBlendMode::Normal,
+    }
+}
+
+fn responsive_group_matrix(
+    config: &RendererUiConfig,
+    group_name: &str,
+    output_w: f64,
+    output_h: f64,
+    root: UiMatrix,
+) -> UiMatrix {
+    let Some(layout) = config.responsive_layouts.get("4:3") else {
+        return root;
+    };
+    let Some(group) = layout.groups.get(group_name) else {
+        return root;
+    };
+    let reference_size = layout.reference_size;
+    let alternate_size = layout.alternate_size;
+    if reference_size[0] == 0 || reference_size[1] == 0 || alternate_size[0] == 0 {
+        return root;
+    }
+
+    let reference_aspect = f64::from(reference_size[0]) / f64::from(reference_size[1]);
+    let alternate_aspect = f64::from(alternate_size[0]) / f64::from(alternate_size[1]);
+    let output_aspect = output_w / output_h.max(1.0);
+    let blend = ((reference_aspect - output_aspect) / (reference_aspect - alternate_aspect))
+        .clamp(0.0, 1.0);
+
+    let source_design = [
+        group.reference_center[0] * f64::from(config.design_size[0]) / f64::from(reference_size[0]),
+        group.reference_center[1] * f64::from(config.design_size[1]) / f64::from(reference_size[1]),
+    ];
+    let source_output = [
+        root.a * source_design[0] + root.tx,
+        root.d * source_design[1] + root.ty,
+    ];
+    let source_normalized = [
+        group.reference_center[0] / f64::from(reference_size[0]),
+        group.reference_center[1] / f64::from(reference_size[1]),
+    ];
+    let alternate_normalized = [
+        group.alternate_center[0] / f64::from(alternate_size[0]),
+        group.alternate_center[1] / f64::from(alternate_size[1]),
+    ];
+    let target = [
+        (source_normalized[0] + (alternate_normalized[0] - source_normalized[0]) * blend)
+            * output_w,
+        (source_normalized[1] + (alternate_normalized[1] - source_normalized[1]) * blend)
+            * output_h,
+    ];
+
+    // The root contain fit already scales the 1920-wide reference by 0.75
+    // at the alternate reference width (1440). Correct only the small
+    // authored group-scale difference to avoid applying that width shrink
+    // twice. For other output sizes, root scaling remains authoritative.
+    let reference_resolution_scale = f64::from(alternate_size[0]) / f64::from(reference_size[0]);
+    let alternate_correction = group.alternate_scale / reference_resolution_scale;
+    let scale = 1.0 + (alternate_correction - 1.0) * blend;
+    UiMatrix {
+        a: scale,
+        b: 0.0,
+        c: 0.0,
+        d: scale,
+        tx: target[0] - scale * source_output[0],
+        ty: target[1] - scale * source_output[1],
+        opacity: 1.0,
+        blend_mode: UiBlendMode::Normal,
+    }
+    .compose(root)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_element(
     rgb: &mut [u8],
     width: u32,
@@ -3540,6 +4036,7 @@ fn render_element(
     element: &UiElement,
     parent: UiRect,
     parent_matrix: UiMatrix,
+    mut alpha_target: Option<&mut [u8]>,
     depth: usize,
 ) -> Result<()> {
     if depth > 32 || !element.enabled {
@@ -3552,9 +4049,6 @@ fn render_element(
     {
         return Ok(());
     }
-    let mut bounds = layout_rect(&element.layout, parent);
-    let (opacity, offset_x, offset_y, scale_x, scale_y, rotation) =
-        animation_values(element, config, state);
     let (mut style_color, mut style_border, mut style_tint, mut style_asset, mut style_opacity) =
         (None, None, None, None, 1.0_f64);
     for style in &element.style_rules {
@@ -3568,37 +4062,8 @@ fn render_element(
             }
         }
     }
-    bounds.x += offset_x;
-    bounds.y += offset_y;
-    bounds.width *= scale_x;
-    bounds.height *= scale_y;
-    let anchor = anchor_fraction(element.layout.anchor);
-    let origin_x = bounds.x - bounds.width * anchor[0];
-    let origin_y = bounds.y - bounds.height * anchor[1];
-    let center_x = bounds.width * 0.5;
-    let center_y = bounds.height * 0.5;
-    let angle = (element.layout.rotation + rotation).to_radians();
-    let cos = angle.cos();
-    let sin = angle.sin();
-    let local = UiMatrix {
-        a: cos * element.layout.scale[0],
-        b: sin * element.layout.scale[0],
-        c: -sin * element.layout.scale[1],
-        d: cos * element.layout.scale[1],
-        tx: origin_x + center_x - cos * element.layout.scale[0] * center_x
-            + sin * element.layout.scale[1] * center_y,
-        ty: origin_y + center_y
-            - sin * element.layout.scale[0] * center_x
-            - cos * element.layout.scale[1] * center_y,
-        opacity: (element.opacity * opacity * style_opacity).clamp(0.0, 1.0),
-    };
-    let world = parent_matrix.compose(local);
-    let rect = UiRect {
-        x: 0.0,
-        y: 0.0,
-        width: bounds.width,
-        height: bounds.height,
-    };
+    let (rect, world) =
+        element_geometry(element, parent, parent_matrix, config, state, style_opacity);
     match &element.kind {
         UiElementKind::Group | UiElementKind::Container => {}
         UiElementKind::Overlay { color } => {
@@ -3610,6 +4075,7 @@ fn render_element(
                 rect,
                 style_color.unwrap_or(*color),
                 0.0,
+                alpha_target.as_deref_mut(),
             );
         }
         UiElementKind::Rectangle {
@@ -3625,6 +4091,7 @@ fn render_element(
                 rect,
                 style_color.unwrap_or(*color),
                 *radius,
+                alpha_target.as_deref_mut(),
             );
             if let Some(border) = style_border.or(*border) {
                 draw_transformed_border(
@@ -3635,6 +4102,7 @@ fn render_element(
                     rect,
                     border,
                     (*radius).max(0.0),
+                    alpha_target.as_deref_mut(),
                 );
             }
         }
@@ -3661,6 +4129,7 @@ fn render_element(
                 &config.fonts,
                 &config.loaded_assets,
                 false,
+                alpha_target.as_deref_mut(),
             );
         }
         UiElementKind::Counter {
@@ -3668,13 +4137,19 @@ fn render_element(
             prefix,
             suffix,
             digits,
+            max_digits,
             color,
             font_size,
             font,
             align,
         } => {
             let text = evaluate_expression(value, config, state)
-                .map(|value| format!("{prefix}{}{suffix}", format_counter(value, *digits)))
+                .map(|value| {
+                    format!(
+                        "{prefix}{}{suffix}",
+                        format_counter(value, *digits, *max_digits)
+                    )
+                })
                 .unwrap_or_default();
             draw_ui_text(
                 rgb,
@@ -3690,6 +4165,7 @@ fn render_element(
                 &config.fonts,
                 &config.loaded_assets,
                 false,
+                alpha_target.as_deref_mut(),
             );
         }
         UiElementKind::Gauge {
@@ -3728,6 +4204,7 @@ fn render_element(
                 mask_asset.as_deref(),
                 config,
                 state,
+                alpha_target.as_deref_mut(),
             );
         }
         UiElementKind::Image { asset, tint } | UiElementKind::Icon { asset, tint } => {
@@ -3742,6 +4219,7 @@ fn render_element(
                     bitmap,
                     [0, 0, bitmap.width, bitmap.height],
                     style_tint.or(*tint),
+                    alpha_target.as_deref_mut(),
                 );
             }
         }
@@ -3761,6 +4239,7 @@ fn render_element(
                     bitmap,
                     *source,
                     style_tint.or(*tint),
+                    alpha_target.as_deref_mut(),
                 );
             }
         }
@@ -3800,6 +4279,7 @@ fn render_element(
             &child,
             child_parent,
             world,
+            alpha_target.as_deref_mut(),
             depth + 1,
         )?;
     }
@@ -3848,6 +4328,19 @@ pub(crate) fn apply_note_hud_animations(state: &mut UiGameplayState, time: f64, 
             progress
         }
     };
+    // sekai.obj2 pulses the AP title glow and shadow glyphs continuously,
+    // independently of note events: min(1, (sin(time*pi*4/3)+1)/2).
+    let ap_combo_alpha = ((time * std::f64::consts::PI * (4.0 / 3.0)).sin() + 1.0) * 0.5;
+    state
+        .variables
+        .insert("ap_combo_alpha".into(), ap_combo_alpha.clamp(0.0, 1.0));
+    // sekai.obj2 pulses only the overflow segment when life exceeds 1000.
+    // The ordinary 0..1000 gauge is intentionally static.
+    let life_overflow_alpha = ((time * std::f64::consts::PI).sin() + 1.0) * 0.5;
+    state.variables.insert(
+        "life_overflow_alpha".into(),
+        life_overflow_alpha.clamp(0.0, 1.0),
+    );
     let latest_note = state
         .variables
         .get("combo_event_time")
@@ -3881,28 +4374,47 @@ pub(crate) fn apply_note_hud_animations(state: &mut UiGameplayState, time: f64, 
         state.variables.insert("combo_pulse_opacity".into(), 0.0);
         state.variables.insert("combo_pulse_visible".into(), 0.0);
     }
+    state.variables.insert(
+        "combo_shadow_pulse_opacity".into(),
+        (state
+            .variables
+            .get("combo_pulse_opacity")
+            .copied()
+            .unwrap_or(0.0)
+            * state.variables["ap_combo_alpha"])
+            .clamp(0.0, 1.0),
+    );
     let judgment_progress = state.judgment_time.map(frame_delta);
-    let judgment_opacity = judgment_progress.map_or(0.0, |progress| {
+    // In sekai.obj2, the fourth `obj.draw` argument is SCALE, not opacity.
+    // The judgment sprite is drawn at its 2/3 reference size with alpha zero
+    // before frame 2; it then grows according to the fourth-power curve until
+    // frame 5, stays at 2/3 scale through frame 19, and is no longer drawn at
+    // frame 20. The image's opacity is 1 during its visible interval.
+    let judgment_scale = judgment_progress.map_or(0.0, |progress| {
         if progress < 2.0 {
-            0.0
+            1.0
         } else if progress < 5.0 {
-            (2.0 / 3.0 - (-1.45 + progress / 4.0).powi(4) * (2.0 / 3.0)).clamp(0.0, 1.0)
+            1.0 - (-1.45 + progress / 4.0).powi(4)
         } else if progress < 20.0 {
-            2.0 / 3.0
+            1.0
         } else {
             0.0
         }
     });
+    let judgment_visible =
+        judgment_progress.is_some_and(|progress| (2.0..20.0).contains(&progress));
     state
         .variables
-        .insert("judgment_opacity".into(), judgment_opacity);
+        .insert("judgment_scale".into(), judgment_scale.clamp(0.0, 1.0));
+    // Keep the alpha signal meaningful for compatible user profiles. The
+    // default profile leaves image opacity at 1 and animates only its scale.
+    state.variables.insert(
+        "judgment_opacity".into(),
+        if judgment_visible { 1.0 } else { 0.0 },
+    );
     state.variables.insert(
         "judgment_visible".into(),
-        if judgment_progress.is_some_and(|progress| progress < 20.0) {
-            1.0
-        } else {
-            0.0
-        },
+        if judgment_visible { 1.0 } else { 0.0 },
     );
 }
 
@@ -4203,8 +4715,14 @@ fn template_value(key: &str, config: &RendererUiConfig, state: &UiFrameState) ->
     evaluate_expression(&UiExpression::Source { source }, config, state).map(format_value)
 }
 
-fn format_counter(value: f64, digits: usize) -> String {
-    let value = format_value(value);
+fn format_counter(value: f64, digits: usize, max_digits: Option<usize>) -> String {
+    let mut value = format_value(value);
+    if let Some(max_digits) = max_digits.filter(|limit| *limit > 0) {
+        let character_count = value.chars().count();
+        if character_count > max_digits {
+            value = value.chars().skip(character_count - max_digits).collect();
+        }
+    }
     if digits == 0 {
         value
     } else {
@@ -4229,8 +4747,18 @@ fn draw_gauge(
     mask_asset: Option<&str>,
     config: &RendererUiConfig,
     state: &UiFrameState,
+    mut alpha_target: Option<&mut [u8]>,
 ) {
-    draw_transformed_rect(rgb, width, height, matrix, rect, track, 0.0);
+    draw_transformed_rect(
+        rgb,
+        width,
+        height,
+        matrix,
+        rect,
+        track,
+        0.0,
+        alpha_target.as_deref_mut(),
+    );
     let Some(value) = evaluate_expression(value, config, state) else {
         return;
     };
@@ -4290,10 +4818,19 @@ fn draw_gauge(
             .and_then(|asset| config.loaded_assets.get(asset))
             .map(|bitmap| bitmap.as_ref());
         draw_transformed_image_masked(
-            rgb, width, height, matrix, filled, bitmap, source, None, mask,
+            rgb,
+            width,
+            height,
+            matrix,
+            filled,
+            bitmap,
+            source,
+            None,
+            mask,
+            alpha_target.as_deref_mut(),
         );
     } else {
-        draw_transformed_rect(rgb, width, height, matrix, filled, fill, 0.0);
+        draw_transformed_rect(rgb, width, height, matrix, filled, fill, 0.0, alpha_target);
     }
 }
 
@@ -4335,13 +4872,12 @@ fn draw_ui_text(
     fonts: &BTreeMap<String, UiBitmapFont>,
     loaded_assets: &BTreeMap<String, Arc<UiBitmap>>,
     preserve_builtin_case: bool,
+    mut alpha_target: Option<&mut [u8]>,
 ) {
     let custom_font = font_name.and_then(|name| fonts.get(name));
     let scale = font_size / 7.0;
-    let glyph_height = font_size;
     let mut chars_drawn = 0;
     let lines: Vec<_> = text.split('\n').take(16).collect();
-    let block_height = glyph_height * lines.len() as f64;
     for (line_index, line) in lines.into_iter().enumerate() {
         let chars: Vec<char> = line.chars().take(256 - chars_drawn).collect();
         chars_drawn += chars.len();
@@ -4352,14 +4888,26 @@ fn draw_ui_text(
             .iter()
             .map(|ch| text_glyph_metrics(*ch, font_size, custom_font, loaded_assets))
             .collect();
-        let text_width = metrics.iter().map(|(_, advance)| advance).sum::<f64>();
-        let mut x = match align {
-            UiTextAlign::Left => 0.0,
-            UiTextAlign::Center => (rect.width - text_width) * 0.5,
-            UiTextAlign::Right => rect.width - text_width,
-        };
-        let y = (rect.height - block_height) * 0.5 + line_index as f64 * glyph_height;
-        for (ch, (glyph_width, advance)) in chars.into_iter().zip(metrics) {
+        let line_height = metrics
+            .iter()
+            .map(|(_, glyph_height, _)| *glyph_height)
+            .fold(font_size, f64::max);
+        let block_height = line_height * text.split('\n').take(16).count() as f64;
+        let glyph_positions = text_glyph_positions(
+            rect.width,
+            &metrics,
+            align,
+            custom_font.is_some(),
+            custom_font.and_then(|font| font.center_spacing),
+            custom_font.map(|font| {
+                font_size * f64::from(font.glyph_width) / f64::from(font.glyph_height.max(1))
+            }),
+        );
+        let line_y = (rect.height - block_height) * 0.5 + line_index as f64 * line_height;
+        for (index, (ch, (glyph_width, glyph_height, _))) in
+            chars.into_iter().zip(metrics).enumerate()
+        {
+            let x = glyph_positions[index];
             if let Some(font) = custom_font {
                 if let Some((bitmap, source)) = bitmap_glyph(font, ch, loaded_assets) {
                     draw_transformed_image(
@@ -4369,13 +4917,14 @@ fn draw_ui_text(
                         matrix,
                         UiRect {
                             x,
-                            y,
+                            y: line_y + (line_height - glyph_height) * 0.5,
                             width: glyph_width,
                             height: glyph_height,
                         },
                         bitmap,
                         source,
                         Some(color),
+                        alpha_target.as_deref_mut(),
                     );
                 } else {
                     draw_builtin_glyph(
@@ -4384,10 +4933,11 @@ fn draw_ui_text(
                         height,
                         matrix,
                         x,
-                        y,
+                        line_y,
                         scale,
                         builtin_case(ch, preserve_builtin_case),
                         color,
+                        alpha_target.as_deref_mut(),
                     );
                 }
             } else {
@@ -4397,15 +4947,82 @@ fn draw_ui_text(
                     height,
                     matrix,
                     x,
-                    y,
+                    line_y,
                     scale,
                     builtin_case(ch, preserve_builtin_case),
                     color,
+                    alpha_target.as_deref_mut(),
                 );
             }
-            x += advance;
         }
     }
+}
+
+fn text_glyph_positions(
+    rect_width: f64,
+    metrics: &[(f64, f64, f64)],
+    align: UiTextAlign,
+    bitmap_font: bool,
+    center_spacing: Option<f64>,
+    center_anchor_glyph_width: Option<f64>,
+) -> Vec<f64> {
+    if metrics.is_empty() {
+        return Vec::new();
+    }
+
+    if let Some(spacing) = center_spacing.filter(|spacing| spacing.is_finite() && *spacing > 0.0) {
+        let count = metrics.len();
+        // Some bitmap counters use larger shadow canvases than their
+        // foreground glyphs. Their centers still share the authored digit
+        // slots, so align the first/last slot using the font's canonical
+        // glyph width rather than each image's expanded shadow bounds.
+        let anchor_glyph_width = center_anchor_glyph_width
+            .filter(|width| width.is_finite() && *width > 0.0)
+            .unwrap_or(metrics[0].0);
+        let first_center = match align {
+            UiTextAlign::Center => {
+                rect_width * 0.5 - (count.saturating_sub(1) as f64) * spacing * 0.5
+            }
+            UiTextAlign::Left => anchor_glyph_width * 0.5,
+            UiTextAlign::Right => {
+                rect_width - anchor_glyph_width * 0.5 - count.saturating_sub(1) as f64 * spacing
+            }
+        };
+        return metrics
+            .iter()
+            .enumerate()
+            .map(|(index, (glyph_width, _, _))| {
+                first_center + index as f64 * spacing - glyph_width * 0.5
+            })
+            .collect();
+    }
+
+    let advance_width = metrics.iter().map(|(_, _, advance)| advance).sum::<f64>();
+    // Center/right align bitmap glyphs by their visible bounds. The last
+    // glyph may extend beyond its advance; aligning advance width alone shifts
+    // the rendered word away from its actual group center.
+    let text_width = if bitmap_font {
+        metrics
+            .last()
+            .map_or(advance_width, |(last_width, _, last_advance)| {
+                advance_width - last_advance + last_width
+            })
+    } else {
+        advance_width
+    };
+    let mut x = match align {
+        UiTextAlign::Left => 0.0,
+        UiTextAlign::Center => (rect_width - text_width) * 0.5,
+        UiTextAlign::Right => rect_width - text_width,
+    };
+    metrics
+        .iter()
+        .map(|(_, _, advance)| {
+            let position = x;
+            x += advance;
+            position
+        })
+        .collect()
 }
 
 fn builtin_case(ch: char, preserve_case: bool) -> char {
@@ -4421,15 +5038,26 @@ fn text_glyph_metrics(
     font_size: f64,
     font: Option<&UiBitmapFont>,
     assets: &BTreeMap<String, Arc<UiBitmap>>,
-) -> (f64, f64) {
+) -> (f64, f64, f64) {
     if let Some(font) = font {
         if let Some((_, source)) = bitmap_glyph(font, ch, assets) {
-            let glyph_width = font_size * f64::from(source[2]) / f64::from(source[3].max(1));
-            return (glyph_width, glyph_width * font.advance);
+            let glyph_scale = font
+                .glyph_scales
+                .get(&ch.to_string())
+                .copied()
+                .unwrap_or(1.0);
+            let glyph_height = font_size * glyph_scale;
+            let glyph_width = glyph_height * f64::from(source[2]) / f64::from(source[3].max(1));
+            let advance = font
+                .glyph_advances
+                .get(&ch.to_string())
+                .copied()
+                .unwrap_or(font.advance);
+            return (glyph_width, glyph_height, glyph_width * advance);
         }
     }
     let glyph_width = font_size * 5.0 / 7.0;
-    (glyph_width, font_size * 6.0 / 7.0)
+    (glyph_width, font_size, font_size * 6.0 / 7.0)
 }
 
 fn bitmap_glyph<'a>(
@@ -4466,6 +5094,7 @@ fn bitmap_glyph<'a>(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_builtin_glyph(
     rgb: &mut [u8],
     width: u32,
@@ -4476,6 +5105,7 @@ fn draw_builtin_glyph(
     scale: f64,
     ch: char,
     color: [u8; 4],
+    mut alpha_target: Option<&mut [u8]>,
 ) {
     for (row, bits) in builtin_glyph(ch).into_iter().enumerate() {
         for col in 0..5 {
@@ -4493,6 +5123,7 @@ fn draw_builtin_glyph(
                     },
                     color,
                     0.0,
+                    alpha_target.as_deref_mut(),
                 );
             }
         }
@@ -4513,7 +5144,7 @@ pub(crate) fn measure_watermark_text(
         .map(|line| {
             line.chars()
                 .take(256)
-                .map(|ch| text_glyph_metrics(ch, font_size, font, assets).1)
+                .map(|ch| text_glyph_metrics(ch, font_size, font, assets).2)
                 .sum::<f64>()
         })
         .fold(0.0, f64::max);
@@ -4552,6 +5183,7 @@ pub(crate) fn render_watermark_text(
         tx: center[0] - cosine * local_center[0] + sine * local_center[1],
         ty: center[1] - sine * local_center[0] - cosine * local_center[1],
         opacity: opacity.clamp(0.0, 1.0),
+        blend_mode: UiBlendMode::Normal,
     };
     draw_ui_text(
         rgb,
@@ -4572,6 +5204,7 @@ pub(crate) fn render_watermark_text(
         fonts,
         assets,
         true,
+        None,
     );
 }
 
@@ -4599,6 +5232,7 @@ pub(crate) fn render_watermark_image(
         tx: center[0] - cosine * local_center[0] + sine * local_center[1],
         ty: center[1] - sine * local_center[0] - cosine * local_center[1],
         opacity: opacity.clamp(0.0, 1.0),
+        blend_mode: UiBlendMode::Normal,
     };
     draw_transformed_image(
         rgb,
@@ -4614,6 +5248,7 @@ pub(crate) fn render_watermark_image(
         bitmap,
         source,
         Some(tint),
+        None,
     );
 }
 
@@ -4699,6 +5334,7 @@ fn builtin_glyph(ch: char) -> [u8; 7] {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transformed_rect(
     rgb: &mut [u8],
     width: u32,
@@ -4707,10 +5343,22 @@ fn draw_transformed_rect(
     rect: UiRect,
     color: [u8; 4],
     radius: f64,
+    alpha_target: Option<&mut [u8]>,
 ) {
-    draw_transformed_shape(rgb, width, height, matrix, rect, radius, |_, _| true, color);
+    draw_transformed_shape(
+        rgb,
+        width,
+        height,
+        matrix,
+        rect,
+        radius,
+        |_, _| true,
+        color,
+        alpha_target,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transformed_border(
     rgb: &mut [u8],
     width: u32,
@@ -4719,6 +5367,7 @@ fn draw_transformed_border(
     rect: UiRect,
     color: [u8; 4],
     radius: f64,
+    alpha_target: Option<&mut [u8]>,
 ) {
     let border = 2.0_f64.min(rect.width.min(rect.height) * 0.5);
     draw_transformed_shape(
@@ -4730,9 +5379,11 @@ fn draw_transformed_border(
         radius,
         |x, y| x < border || y < border || x >= rect.width - border || y >= rect.height - border,
         color,
+        alpha_target,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transformed_shape(
     rgb: &mut [u8],
     width: u32,
@@ -4742,6 +5393,7 @@ fn draw_transformed_shape(
     radius: f64,
     predicate: impl Fn(f64, f64) -> bool,
     color: [u8; 4],
+    mut alpha_target: Option<&mut [u8]>,
 ) {
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return;
@@ -4786,11 +5438,22 @@ fn draw_transformed_shape(
                     continue;
                 }
             }
-            blend_pixel(rgb, width, height, x, y, color, matrix.opacity);
+            blend_pixel(
+                rgb,
+                width,
+                height,
+                x,
+                y,
+                color,
+                matrix.opacity,
+                matrix.blend_mode,
+                alpha_target.as_deref_mut(),
+            );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transformed_image(
     rgb: &mut [u8],
     width: u32,
@@ -4800,10 +5463,23 @@ fn draw_transformed_image(
     bitmap: &UiBitmap,
     source: [u32; 4],
     tint: Option<[u8; 4]>,
+    alpha_target: Option<&mut [u8]>,
 ) {
-    draw_transformed_image_masked(rgb, width, height, matrix, rect, bitmap, source, tint, None);
+    draw_transformed_image_masked(
+        rgb,
+        width,
+        height,
+        matrix,
+        rect,
+        bitmap,
+        source,
+        tint,
+        None,
+        alpha_target,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_transformed_image_masked(
     rgb: &mut [u8],
     width: u32,
@@ -4814,6 +5490,7 @@ fn draw_transformed_image_masked(
     source: [u32; 4],
     tint: Option<[u8; 4]>,
     mask: Option<&UiBitmap>,
+    mut alpha_target: Option<&mut [u8]>,
 ) {
     if rect.width <= 0.0 || rect.height <= 0.0 || source[2] == 0 || source[3] == 0 {
         return;
@@ -4859,7 +5536,17 @@ fn draw_transformed_image_masked(
                         (u16::from(color[channel]) * u16::from(tint[channel]) / 255) as u8;
                 }
             }
-            blend_pixel(rgb, width, height, x, y, color, matrix.opacity);
+            blend_pixel(
+                rgb,
+                width,
+                height,
+                x,
+                y,
+                color,
+                matrix.opacity,
+                matrix.blend_mode,
+                alpha_target.as_deref_mut(),
+            );
         }
     }
 }
@@ -4950,6 +5637,7 @@ fn transformed_bounds(
     (max_x > min_x && max_y > min_y).then_some((min_x, min_y, max_x, max_y))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn blend_pixel(
     rgb: &mut [u8],
     width: u32,
@@ -4958,6 +5646,8 @@ fn blend_pixel(
     y: i32,
     color: [u8; 4],
     opacity: f64,
+    blend_mode: UiBlendMode,
+    alpha_target: Option<&mut [u8]>,
 ) {
     if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
         return;
@@ -4967,10 +5657,37 @@ fn blend_pixel(
         return;
     }
     let offset = (y as usize * width as usize + x as usize) * 3;
+    if let Some(alpha_plane) = alpha_target {
+        let alpha_offset = y as usize * width as usize + x as usize;
+        let source_alpha = f64::from(alpha) / 255.0;
+        let destination_alpha = f64::from(alpha_plane[alpha_offset]) / 255.0;
+        let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+        let output_alpha_byte = (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+        for channel in 0..3 {
+            let source_premultiplied = f64::from(color[channel]) * source_alpha;
+            let destination_premultiplied = f64::from(rgb[offset + channel]);
+            let output = match blend_mode {
+                UiBlendMode::Normal => {
+                    source_premultiplied + destination_premultiplied * (1.0 - source_alpha)
+                }
+                UiBlendMode::Add => source_premultiplied + destination_premultiplied,
+            };
+            rgb[offset + channel] = output.round().clamp(0.0, 255.0) as u8;
+        }
+        alpha_plane[alpha_offset] = output_alpha_byte;
+        return;
+    }
     for channel in 0..3 {
-        rgb[offset + channel] = ((u16::from(rgb[offset + channel]) * (255 - alpha)
-            + u16::from(color[channel]) * alpha)
-            / 255) as u8;
+        rgb[offset + channel] = match blend_mode {
+            UiBlendMode::Normal => {
+                ((u16::from(rgb[offset + channel]) * (255 - alpha)
+                    + u16::from(color[channel]) * alpha)
+                    / 255) as u8
+            }
+            UiBlendMode::Add => (u16::from(rgb[offset + channel])
+                + (u16::from(color[channel]) * alpha + 127) / 255)
+                .min(255) as u8,
+        };
     }
 }
 
@@ -5179,6 +5896,569 @@ mod tests {
             loaded.assets["judge-perfect"],
             PathBuf::from("pack://judge.1")
         );
+        for id in [
+            "combo-shadow-value",
+            "combo-value",
+            "combo-event-pulse",
+            "combo-event-pop",
+        ] {
+            assert_eq!(
+                loaded
+                    .elements
+                    .iter()
+                    .find(|element| element.id == id)
+                    .and_then(|element| element.isolation_group.as_deref()),
+                Some("combo-number")
+            );
+        }
+        let restored: RendererUiConfig =
+            serde_json::from_value(serde_json::to_value(&loaded).unwrap()).unwrap();
+        assert_eq!(
+            restored
+                .elements
+                .iter()
+                .find(|element| element.id == "combo-event-pop")
+                .and_then(|element| element.isolation_group.as_deref()),
+            Some("combo-number")
+        );
+    }
+
+    #[test]
+    fn sono_overlay_combo_glyphs_match_packaged_overlay_art_at_native_resolution() {
+        let config = profile("default.json");
+        assert_eq!(config.fonts["combo"].glyph_max_dimension, Some(256));
+        assert_eq!(config.fonts["combo-burst"].glyph_max_dimension, Some(256));
+        // `sekai.obj2` resolves images relative to PED_DATA.path, which is
+        // populated by Sono-Overlay's generated package. The adjacent
+        // `build/assets` tree is that runnable package output. The raw
+        // `Sono-Overlay/assets` authoring PNGs are a different art revision
+        // for p0..p9 and are not the expected pixels in the reference video.
+        let reference_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("TestingSuite/Sono-Overlay/build/assets/combo");
+
+        for (font_name, asset_prefix, reference_prefix) in [
+            ("combo", "combo-digit-", "p"),
+            ("combo-burst", "combo-burst-", "b"),
+        ] {
+            let font = &config.fonts[font_name];
+            for digit in '0'..='9' {
+                let character = digit.to_string();
+                let asset_id = &font.glyph_assets[&character];
+                assert_eq!(asset_id, &format!("{asset_prefix}{digit}"));
+                let actual = &config.loaded_assets[asset_id];
+                let expected = image::ImageReader::open(
+                    reference_root.join(format!("{reference_prefix}{digit}.png")),
+                )
+                .unwrap()
+                .with_guessed_format()
+                .unwrap()
+                .decode()
+                .unwrap()
+                .to_rgba8();
+                assert_eq!(
+                    (actual.width, actual.height),
+                    expected.dimensions(),
+                    "{font_name} digit {digit} was rescaled"
+                );
+                assert_eq!(
+                    actual.rgba.as_slice(),
+                    expected.as_raw().as_slice(),
+                    "{font_name} digit {digit} differs from Sono-Overlay's source PNG"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn packaged_ap_combo_art_reaches_the_production_raster_path() {
+        const WIDTH: u32 = 1920;
+        const HEIGHT: u32 = 1080;
+        let mut config = profile("default.json");
+        config
+            .elements
+            .retain(|element| element.id == "combo-value");
+        let state = UiFrameState {
+            time: 1.0,
+            frame_rate: 60.0,
+            gameplay: Some(UiGameplayState {
+                combo: 8,
+                ..UiGameplayState::default()
+            }),
+            ..UiFrameState::default()
+        };
+        let mut frame = rgb(WIDTH, HEIGHT, [0, 0, 0]);
+        render_gameplay_ui(&mut frame, WIDTH, HEIGHT, &config, &state).unwrap();
+
+        // The packaged AP `p8` glyph has a broad light lavender/white fill.
+        // The raw authoring p8 has a blue fill and falls below this count.
+        // Count actual RGB output pixels in the source-defined combo region,
+        // not just the profile's symbolic asset ID.
+        let mut packaged_palette_pixels = 0usize;
+        for y in 360..590 {
+            for x in 1500..1770 {
+                let offset = ((y * WIDTH + x) * 3) as usize;
+                let red = frame[offset];
+                let blue = frame[offset + 2];
+                if red > 220 && blue > 220 {
+                    packaged_palette_pixels += 1;
+                }
+            }
+        }
+        assert!(
+            packaged_palette_pixels > 4_000,
+            "expected the packaged AP combo-art palette in the actual compositor raster, found {packaged_palette_pixels} pixels"
+        );
+    }
+
+    #[test]
+    fn sono_overlay_combo_digits_share_the_source_center_slots_for_all_widths() {
+        let config = profile("default.json");
+        let values = ["8", "11", "46", "48", "100", "106", "111", "1000"];
+        let reference_rect_width = 0.22 * 1920.0;
+        let font_sizes = [("combo", 157.5), ("combo-burst", 221.55)];
+        let mut measured_bounds = BTreeMap::new();
+
+        for (font_name, font_size) in font_sizes {
+            let font = &config.fonts[font_name];
+            assert_eq!(font.center_spacing, Some(108.0));
+            for value in values {
+                let metrics: Vec<_> = value
+                    .chars()
+                    .map(|ch| text_glyph_metrics(ch, font_size, Some(font), &config.loaded_assets))
+                    .collect();
+                let positions = text_glyph_positions(
+                    reference_rect_width,
+                    &metrics,
+                    UiTextAlign::Center,
+                    true,
+                    font.center_spacing,
+                    Some(
+                        font_size * f64::from(font.glyph_width)
+                            / f64::from(font.glyph_height.max(1)),
+                    ),
+                );
+                let first_center =
+                    reference_rect_width * 0.5 - (metrics.len().saturating_sub(1) as f64) * 54.0;
+                let centers: Vec<_> = positions
+                    .iter()
+                    .zip(&metrics)
+                    .map(|(left, (glyph_width, _, _))| left + glyph_width * 0.5)
+                    .collect();
+                for (index, center) in centers.iter().enumerate() {
+                    let expected = first_center + index as f64 * 108.0;
+                    assert!(
+                        (center - expected).abs() < 1e-9,
+                        "{font_name} {value}: glyph {index} center {center} != {expected}"
+                    );
+                }
+                assert!(
+                    (centers.first().unwrap() + centers.last().unwrap() - reference_rect_width)
+                        .abs()
+                        < 1e-9,
+                    "{font_name} {value} must stay centered as its digit count changes"
+                );
+                let bounds = (
+                    positions[0],
+                    positions
+                        .iter()
+                        .zip(&metrics)
+                        .map(|(left, (glyph_width, _, _))| left + glyph_width)
+                        .fold(f64::NEG_INFINITY, f64::max),
+                );
+                let expected_bounds_width = (metrics.len().saturating_sub(1) as f64) * 108.0
+                    + (metrics.first().unwrap().0 + metrics.last().unwrap().0) * 0.5;
+                assert!(
+                    ((bounds.1 - bounds.0) - expected_bounds_width).abs() < 1e-9,
+                    "{font_name} {value}: measured width {} does not match source-centered width {expected_bounds_width}",
+                    bounds.1 - bounds.0
+                );
+                measured_bounds.insert((font_name, value), bounds);
+            }
+        }
+
+        for value in values {
+            let foreground_centers = {
+                let font = &config.fonts["combo"];
+                let metrics: Vec<_> = value
+                    .chars()
+                    .map(|ch| text_glyph_metrics(ch, 157.5, Some(font), &config.loaded_assets))
+                    .collect();
+                let positions = text_glyph_positions(
+                    reference_rect_width,
+                    &metrics,
+                    UiTextAlign::Center,
+                    true,
+                    font.center_spacing,
+                    Some(157.5 * f64::from(font.glyph_width) / f64::from(font.glyph_height.max(1))),
+                );
+                positions
+                    .iter()
+                    .zip(&metrics)
+                    .map(|(left, (glyph_width, _, _))| left + glyph_width * 0.5)
+                    .collect::<Vec<_>>()
+            };
+            let shadow_centers = {
+                let font = &config.fonts["combo-burst"];
+                let metrics: Vec<_> = value
+                    .chars()
+                    .map(|ch| text_glyph_metrics(ch, 221.55, Some(font), &config.loaded_assets))
+                    .collect();
+                let positions = text_glyph_positions(
+                    reference_rect_width,
+                    &metrics,
+                    UiTextAlign::Center,
+                    true,
+                    font.center_spacing,
+                    Some(
+                        221.55 * f64::from(font.glyph_width) / f64::from(font.glyph_height.max(1)),
+                    ),
+                );
+                positions
+                    .iter()
+                    .zip(&metrics)
+                    .map(|(left, (glyph_width, _, _))| left + glyph_width * 0.5)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(foreground_centers, shadow_centers, "value={value}");
+            assert!(
+                measured_bounds[&("combo-burst", value)].1 > measured_bounds[&("combo", value)].1
+            );
+        }
+    }
+
+    #[test]
+    fn sono_overlay_combo_slot_spacing_scales_once_with_the_reference_pop() {
+        let config = profile("default.json");
+        let output = [1920.0, 1080.0];
+        let screen = UiRect {
+            x: 0.0,
+            y: 0.0,
+            width: output[0],
+            height: output[1],
+        };
+        let root = ui_root_matrix(output[0], output[1], config.design_size, config.fit);
+        let combo_root = responsive_group_matrix(&config, "combo", output[0], output[1], root);
+        let source_slot_spacing = 72.0 * 1.5;
+        let values = ["8", "11", "46", "48", "100", "106", "111", "1000"];
+        let ages_in_reference_frames = [0.0, 1.0, 4.0, 8.0, 11.0, 13.0, 14.0];
+
+        for value in values {
+            for age in ages_in_reference_frames {
+                let time = age / 60.0;
+                let mut gameplay = UiGameplayState {
+                    combo: value.parse().unwrap(),
+                    latest_event_time: Some(0.0),
+                    ..UiGameplayState::default()
+                };
+                apply_note_hud_animations(&mut gameplay, time, 60.0);
+                let state = UiFrameState {
+                    time,
+                    frame_rate: 60.0,
+                    gameplay: Some(gameplay),
+                    ..UiFrameState::default()
+                };
+                let count = value.chars().count();
+
+                for (element_id, font_name, font_size, expected_scale) in [
+                    ("combo-value", "combo", 157.5, (0.5 + age / 16.0).min(1.0)),
+                    (
+                        "combo-shadow-value",
+                        "combo-burst",
+                        221.55,
+                        (0.5 + age / 16.0).min(1.0),
+                    ),
+                    ("combo-event-pop", "combo", 157.5, 0.5 + age / 16.0),
+                    ("combo-event-pulse", "combo-burst", 221.55, 0.5 + age / 16.0),
+                ] {
+                    let element = config
+                        .elements
+                        .iter()
+                        .find(|element| element.id == element_id)
+                        .unwrap();
+                    let (rect, world) =
+                        element_geometry(element, screen, combo_root, &config, &state, 1.0);
+                    let font = &config.fonts[font_name];
+                    let metrics = value
+                        .chars()
+                        .map(|ch| {
+                            text_glyph_metrics(ch, font_size, Some(font), &config.loaded_assets)
+                        })
+                        .collect::<Vec<_>>();
+                    let positions = text_glyph_positions(
+                        rect.width,
+                        &metrics,
+                        UiTextAlign::Center,
+                        true,
+                        font.center_spacing,
+                        Some(
+                            font_size * f64::from(font.glyph_width)
+                                / f64::from(font.glyph_height.max(1)),
+                        ),
+                    );
+                    let centers = positions
+                        .iter()
+                        .zip(&metrics)
+                        .map(|(left, (glyph_width, _, _))| {
+                            world.a * (left + glyph_width * 0.5)
+                                + world.c * (rect.height * 0.5)
+                                + world.tx
+                        })
+                        .collect::<Vec<_>>();
+                    let output_spacing = source_slot_spacing * expected_scale;
+
+                    for (index, center) in centers.iter().enumerate() {
+                        let expected = 1633.5
+                            + (index as f64 - (count.saturating_sub(1) as f64) * 0.5)
+                                * output_spacing;
+                        assert!(
+                            (center - expected).abs() < 1e-7,
+                            "{element_id} {value} age={age}: center {center} != {expected}"
+                        );
+                    }
+                    assert!(
+                        (centers.first().unwrap() + centers.last().unwrap() - 2.0 * 1633.5).abs()
+                            < 1e-7,
+                        "{element_id} {value} age={age} drifted away from the Lua group center"
+                    );
+
+                    if count > 1 {
+                        for pair in centers.windows(2) {
+                            assert!(
+                                ((pair[1] - pair[0]) - output_spacing).abs() < 1e-7,
+                                "{element_id} {value} age={age}: effective spacing {} != {output_spacing}",
+                                pair[1] - pair[0]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sono_overlay_ap_combo_assets_follow_the_lua_ap_branch() {
+        let config = profile("default.json");
+        let source = include_str!("../TestingSuite/Sono-Overlay/pkg/sono-overlay/sekai.obj2");
+
+        assert!(source.contains("--track@ap:APコンボ"));
+        assert!(source.contains("obj.load(\"image\", PED_DATA.path..\"/combo/pe.png\")"));
+        assert!(source.contains("obj.load(\"image\", PED_DATA.path..\"/combo/pt.png\")"));
+        assert!(source.contains("obj.load(\"image\", PED_DATA.path..\"/combo/nt.png\")"));
+        assert!(source.contains("PED_DATA.path..\"/combo/p\"..digit..\".png\""));
+        assert!(source.contains("PED_DATA.path..\"/combo/n\"..digit..\".png\""));
+
+        assert_eq!(
+            config.assets["combo-glow"],
+            PathBuf::from("pack://combo.pe")
+        );
+        assert_eq!(
+            config.assets["combo-title"],
+            PathBuf::from("pack://combo.pt")
+        );
+        for digit in '0'..='9' {
+            assert_eq!(
+                config.fonts["combo"].glyph_assets[&digit.to_string()],
+                format!("combo-digit-{digit}")
+            );
+            assert_eq!(
+                config.fonts["combo-burst"].glyph_assets[&digit.to_string()],
+                format!("combo-burst-{digit}")
+            );
+        }
+        assert!(config
+            .elements
+            .iter()
+            .find(|element| element.id == "combo-special-burst")
+            .is_some_and(|element| !element.enabled));
+    }
+
+    #[test]
+    fn sono_overlay_score_and_life_shadows_share_lua_digit_centers() {
+        let config = profile("default.json");
+        let element = |id: &str| {
+            config
+                .elements
+                .iter()
+                .find(|element| element.id == id)
+                .unwrap_or_else(|| panic!("missing {id}"))
+        };
+        for (shadow_id, foreground_id) in [
+            ("score-shadow", "score-value"),
+            ("life-value-shadow", "life-value"),
+        ] {
+            assert_eq!(
+                element(shadow_id).layout,
+                element(foreground_id).layout,
+                "Sono-Overlay draws {shadow_id} and {foreground_id} at the same coordinates, anchor, and size"
+            );
+        }
+
+        let score_spacing = 22.0 * 1.5;
+        for font_name in ["score", "score-shadow"] {
+            let font = &config.fonts[font_name];
+            assert_eq!(font.center_spacing, Some(score_spacing));
+            for digit in '0'..='9' {
+                let source_height = if font_name == "score-shadow" {
+                    56.0
+                } else {
+                    44.0
+                };
+                let glyph_scale = font
+                    .glyph_scales
+                    .get(&digit.to_string())
+                    .copied()
+                    .unwrap_or(1.0);
+                assert!((44.0 * glyph_scale - source_height).abs() < 1e-6);
+            }
+        }
+
+        let score_value = element("score-value");
+        let score_shadow = element("score-shadow");
+        let score_centers = |font_name: &str, font_size: f64, id: &str| {
+            let font = &config.fonts[font_name];
+            let text = "00089532";
+            let metrics: Vec<_> = text
+                .chars()
+                .map(|ch| text_glyph_metrics(ch, font_size, Some(font), &config.loaded_assets))
+                .collect();
+            let width = element(id).layout.width * 1920.0;
+            let positions = text_glyph_positions(
+                width,
+                &metrics,
+                UiTextAlign::Left,
+                true,
+                font.center_spacing,
+                Some(font_size * f64::from(font.glyph_width) / f64::from(font.glyph_height.max(1))),
+            );
+            positions
+                .iter()
+                .zip(&metrics)
+                .map(|(left, (glyph_width, _, _))| left + glyph_width * 0.5)
+                .collect::<Vec<_>>()
+        };
+        let score_foreground_centers = score_centers("score", 44.0, &score_value.id);
+        let score_shadow_centers = score_centers("score-shadow", 44.0, &score_shadow.id);
+        assert_eq!(score_foreground_centers.len(), score_shadow_centers.len());
+        assert!(score_foreground_centers
+            .iter()
+            .zip(&score_shadow_centers)
+            .all(|(foreground, shadow)| (foreground - shadow).abs() < 1e-9));
+        assert!(score_foreground_centers.windows(2).all(|pair| (pair[1]
+            - pair[0]
+            - score_spacing)
+            .abs()
+            < 1e-9));
+
+        let life_spacing = 127.0 * (17.33 / 100.0);
+        let life_value = element("life-value");
+        let life_shadow = element("life-value-shadow");
+        let life_centers = |font_name: &str, id: &str| {
+            let font = &config.fonts[font_name];
+            let metrics: Vec<_> = "1000"
+                .chars()
+                .map(|ch| text_glyph_metrics(ch, 34.0, Some(font), &config.loaded_assets))
+                .collect();
+            let width = element(id).layout.width * 1920.0;
+            let positions = text_glyph_positions(
+                width,
+                &metrics,
+                UiTextAlign::Right,
+                true,
+                font.center_spacing,
+                Some(34.0 * f64::from(font.glyph_width) / f64::from(font.glyph_height.max(1))),
+            );
+            positions
+                .iter()
+                .zip(&metrics)
+                .map(|(left, (glyph_width, _, _))| left + glyph_width * 0.5)
+                .collect::<Vec<_>>()
+        };
+        let life_foreground_centers = life_centers("life", &life_value.id);
+        let life_shadow_centers = life_centers("life-shadow", &life_shadow.id);
+        assert_eq!(life_foreground_centers.len(), life_shadow_centers.len());
+        assert!(life_foreground_centers
+            .iter()
+            .zip(&life_shadow_centers)
+            .all(|(foreground, shadow)| (foreground - shadow).abs() < 1e-9));
+        assert!(life_foreground_centers
+            .windows(2)
+            .all(|pair| (pair[1] - pair[0] - life_spacing).abs() < 1e-9));
+
+        for digit in '0'..='9' {
+            let font = &config.fonts["life-shadow"];
+            let scale = font.glyph_scales[&digit.to_string()];
+            assert!((34.0 * scale - (34.0 * 1466.0 / 1333.0)).abs() < 1e-6);
+        }
+
+        // Opt-in visual evidence for the same compositor and reference assets.
+        // Normal test runs remain filesystem-free.
+        if let Some(capture_dir) = std::env::var_os("SONO_RENDERER_SHADOW_CAPTURE_DIR") {
+            let capture_dir = std::path::PathBuf::from(capture_dir);
+            std::fs::create_dir_all(&capture_dir).unwrap();
+            let state = UiFrameState {
+                gameplay: Some(UiGameplayState {
+                    score: 89_532.0,
+                    life: 1_000.0,
+                    ..UiGameplayState::default()
+                }),
+                ..UiFrameState::default()
+            };
+            let render_pair = |capture_config: &RendererUiConfig| {
+                let mut capture_config = capture_config.clone();
+                capture_config.elements.retain(|element| {
+                    matches!(
+                        element.id.as_str(),
+                        "score-shadow" | "score-value" | "life-value-shadow" | "life-value"
+                    )
+                });
+                let mut rgb = vec![18_u8; 1920 * 1080 * 3];
+                render_gameplay_ui(&mut rgb, 1920, 1080, &capture_config, &state).unwrap();
+                image::RgbImage::from_raw(1920, 1080, rgb).unwrap()
+            };
+
+            let mut before = config.clone();
+            before
+                .elements
+                .iter_mut()
+                .find(|element| element.id == "score-shadow")
+                .unwrap()
+                .layout
+                .x = 0.087;
+            before
+                .elements
+                .iter_mut()
+                .find(|element| element.id == "score-shadow")
+                .unwrap()
+                .layout
+                .y = 0.077;
+            before
+                .elements
+                .iter_mut()
+                .find(|element| element.id == "life-value-shadow")
+                .unwrap()
+                .layout
+                .x = 0.927;
+            before
+                .elements
+                .iter_mut()
+                .find(|element| element.id == "life-value-shadow")
+                .unwrap()
+                .layout
+                .y = 0.013;
+            for name in ["score", "score-shadow", "life", "life-shadow"] {
+                let font = before.fonts.get_mut(name).unwrap();
+                font.center_spacing = None;
+                font.glyph_scales.clear();
+            }
+            before.fonts.get_mut("life-shadow").unwrap().advance = 1.0;
+
+            render_pair(&before)
+                .save(capture_dir.join("score-life-shadow-before.png"))
+                .unwrap();
+            render_pair(&config)
+                .save(capture_dir.join("score-life-shadow-after.png"))
+                .unwrap();
+        }
     }
 
     #[test]
@@ -5341,11 +6621,118 @@ mod tests {
     }
 
     #[test]
+    fn additive_ui_blend_matches_the_combo_pop_compositing_path() {
+        let mut normal = vec![100, 100, 100];
+        blend_pixel(
+            &mut normal,
+            1,
+            1,
+            0,
+            0,
+            [200, 40, 240, 128],
+            1.0,
+            UiBlendMode::Normal,
+            None,
+        );
+        let mut additive = vec![100, 100, 100];
+        blend_pixel(
+            &mut additive,
+            1,
+            1,
+            0,
+            0,
+            [200, 40, 240, 128],
+            1.0,
+            UiBlendMode::Add,
+            None,
+        );
+        assert_eq!(normal, [150, 69, 170]);
+        assert_eq!(additive, [200, 120, 220]);
+    }
+
+    #[test]
+    fn isolated_additive_combo_group_composites_over_gameplay_after_internal_blend() {
+        let mut config = RendererUiConfig::default();
+        config.enabled = true;
+        config.design_size = [1, 1];
+        config.elements = vec![
+            UiElement {
+                id: "combo-base".into(),
+                z_index: 0,
+                isolation_group: Some("combo-number".into()),
+                kind: UiElementKind::Rectangle {
+                    color: [200, 0, 0, 128],
+                    border: None,
+                    radius: 0.0,
+                },
+                ..UiElement::default()
+            },
+            UiElement {
+                id: "combo-pop".into(),
+                z_index: 1,
+                blend_mode: UiBlendMode::Add,
+                isolation_group: Some("combo-number".into()),
+                kind: UiElementKind::Rectangle {
+                    color: [0, 200, 0, 128],
+                    border: None,
+                    radius: 0.0,
+                },
+                ..UiElement::default()
+            },
+        ];
+        let mut frame = vec![10, 10, 10];
+        render_custom_ui(&mut frame, 1, 1, &config, &UiFrameState::default()).unwrap();
+        assert_eq!(frame, [102, 102, 2]);
+    }
+
+    #[test]
+    fn combo_foreground_and_shadow_render_as_independent_reference_layers() {
+        let mut config = profile("default.json");
+        let state = UiFrameState {
+            time: 0.375,
+            frame_rate: 30.0,
+            gameplay: Some(UiGameplayState {
+                combo: 8,
+                ..UiGameplayState::default()
+            }),
+            ..UiFrameState::default()
+        };
+
+        config
+            .elements
+            .retain(|element| element.id == "combo-shadow-value");
+        let mut shadow_only = rgb(1920, 1080, [0, 0, 0]);
+        render_gameplay_ui(&mut shadow_only, 1920, 1080, &config, &state).unwrap();
+        let shadow_peak = shadow_only.iter().copied().max().unwrap_or(0);
+        assert!(shadow_peak > 0, "the b8 shadow glyph must be visible");
+        assert!(
+            shadow_peak <= 104,
+            "the shadow retains the source PNG's maximum alpha (104), got {shadow_peak}"
+        );
+
+        config = profile("default.json");
+        config
+            .elements
+            .retain(|element| element.id == "combo-value");
+        let mut foreground_only = rgb(1920, 1080, [0, 0, 0]);
+        render_gameplay_ui(&mut foreground_only, 1920, 1080, &config, &state).unwrap();
+        let foreground_peak = foreground_only.iter().copied().max().unwrap_or(0);
+        assert!(
+            foreground_peak > shadow_peak,
+            "the p8 foreground ({foreground_peak}) must render independently above the b8 alpha peak ({shadow_peak})"
+        );
+        assert!(
+            foreground_peak >= 250,
+            "p8 should retain opaque foreground pixels"
+        );
+    }
+
+    #[test]
     fn bundled_sono_overlay_hud_renders_at_landscape_and_portrait_sizes() {
         let mut config = RendererUiConfig::reference_default();
         assert_eq!(config.profile_name, "Asset-backed Gameplay HUD");
-        assert!(!config.enabled);
-        assert_eq!(config.elements.len(), 26);
+        assert!(config.enabled);
+        assert_eq!(config.elements.len(), 28);
         assert_eq!(
             config.scoring.as_ref().map(|scoring| scoring.source),
             Some(UiScoringSource::SonoOverlay),
@@ -5365,8 +6752,13 @@ mod tests {
             .iter()
             .find(|element| element.id == "combo-value")
             .expect("reference combo counter");
-        assert_eq!(combo_value.layout.x, 0.85);
-        assert_eq!(combo_value.layout.y, 0.445);
+        assert_eq!(combo_value.layout.x, 0.85078125);
+        assert_eq!(combo_value.layout.y, 0.4412037037037037);
+        assert!(matches!(
+            &combo_value.kind,
+            UiElementKind::Counter { max_digits: Some(4), font: Some(font), font_size, .. }
+                if font == "combo" && *font_size == 157.5
+        ));
         assert!(combo_value.animations.iter().all(|animation| matches!(
             animation.value_from_state.as_ref(),
             Some(UiExpression::Source {
@@ -5380,9 +6772,42 @@ mod tests {
             .expect("reference combo pulse layer");
         assert_eq!(combo_pulse.layout.x, combo_value.layout.x);
         assert_eq!(combo_pulse.layout.y, combo_value.layout.y);
+        assert_eq!(combo_pulse.z_index, 2);
         assert!(matches!(
             &combo_pulse.kind,
-            UiElementKind::Counter { font: Some(font), .. } if font == "combo-burst"
+            UiElementKind::Counter { max_digits: Some(4), font: Some(font), font_size, .. }
+                if font == "combo-burst" && *font_size == 221.55
+        ));
+        assert_eq!(combo_pulse.blend_mode, UiBlendMode::Normal);
+        let combo_pop = config
+            .elements
+            .iter()
+            .find(|element| element.id == "combo-event-pop")
+            .expect("source-defined additive combo foreground pop layer");
+        assert_eq!(combo_pop.blend_mode, UiBlendMode::Add);
+        let combo_shadow = config
+            .elements
+            .iter()
+            .find(|element| element.id == "combo-shadow-value")
+            .expect("persistent AP shadow glyphs");
+        assert_eq!(combo_shadow.z_index, 0);
+        assert!(combo_shadow.animations.iter().any(|animation| matches!(
+            animation.value_from_state.as_ref(),
+            Some(UiExpression::Source {
+                source: UiStateSource::GameplayVariable { name }
+            }) if name == "ap_combo_alpha"
+        )));
+        let combo_pop = config
+            .elements
+            .iter()
+            .find(|element| element.id == "combo-event-pop")
+            .expect("foreground combo pop glyphs");
+        assert_eq!(combo_pop.z_index, 3);
+        assert_eq!(combo_pop.blend_mode, UiBlendMode::Add);
+        assert!(matches!(
+            &combo_pop.kind,
+            UiElementKind::Counter { font: Some(font), font_size, .. }
+                if font == "combo" && *font_size == 157.5
         ));
         let judgment = config
             .elements
@@ -5390,14 +6815,34 @@ mod tests {
             .find(|element| element.id == "judgement-perfect")
             .expect("reference judgment artwork");
         assert_eq!(judgment.layout.x, 0.5);
-        assert_eq!(judgment.layout.y, 0.62);
+        assert_eq!(judgment.layout.y, 0.6180555555555556);
+        assert_eq!(judgment.layout.width, 0.16145833333333334);
+        assert_eq!(judgment.layout.height, 0.075);
+        assert_eq!(judgment.opacity, 1.0);
         assert!(judgment.visible_when.is_some());
-        assert!(judgment.animations.iter().any(|animation| matches!(
-            animation.value_from_state.as_ref(),
-            Some(UiExpression::Source {
-                source: UiStateSource::GameplayVariable { name }
-            }) if name == "judgment_opacity"
-        )));
+        assert_eq!(judgment.opacity, 1.0);
+        assert!(judgment.animations.iter().any(|animation| {
+            animation.property == UiAnimationProperty::ScaleX
+                && matches!(
+                    animation.value_from_state.as_ref(),
+                    Some(UiExpression::Source {
+                        source: UiStateSource::GameplayVariable { name }
+                    }) if name == "judgment_scale"
+                )
+        }));
+        assert!(judgment.animations.iter().any(|animation| {
+            animation.property == UiAnimationProperty::ScaleY
+                && matches!(
+                    animation.value_from_state.as_ref(),
+                    Some(UiExpression::Source {
+                        source: UiStateSource::GameplayVariable { name }
+                    }) if name == "judgment_scale"
+                )
+        }));
+        assert!(judgment
+            .animations
+            .iter()
+            .all(|animation| animation.property != UiAnimationProperty::Opacity));
         let life_gauge = config
             .elements
             .iter()
@@ -5418,7 +6863,13 @@ mod tests {
         config.enabled = true;
         config.load_external_data().unwrap();
 
-        for (width, height) in [(1920, 1080), (1280, 720), (640, 360), (1080, 1920)] {
+        for (width, height) in [
+            (1920, 1080),
+            (1440, 1080),
+            (1280, 720),
+            (640, 360),
+            (1080, 1920),
+        ] {
             let mut frame = rgb(width, height, [0, 0, 0]);
             render_gameplay_ui(&mut frame, width, height, &config, &UiFrameState::default())
                 .unwrap();
@@ -5437,12 +6888,138 @@ mod tests {
     }
 
     #[test]
+    fn sono_overlay_reference_geometry_is_preserved_at_16_9_and_adapted_at_4_3() {
+        let config = RendererUiConfig::reference_default();
+        let reference = config.responsive_layouts.get("4:3").unwrap();
+        let at_16_9 = ui_root_matrix(1920.0, 1080.0, config.design_size, config.fit);
+        let at_4_3_root = ui_root_matrix(1440.0, 1080.0, config.design_size, config.fit);
+        let expected_4_3 = [
+            ("score", [376.5, 69.0], [277.5, 50.5], 112.0 / 150.0),
+            ("life", [1665.0, 62.5], [1252.0, 47.0], 12.97 / 17.33),
+            ("combo", [1633.5, 476.5], [1225.0, 493.0], 112.0 / 150.0),
+            ("judgment", [960.0, 667.5], [720.0, 635.0], 110.0 / 150.0),
+        ];
+        for (name, source, target, source_scale) in expected_4_3 {
+            let group = &reference.groups[name];
+            assert_eq!(group.reference_center, source);
+            assert_eq!(group.alternate_center, target);
+            assert!((group.alternate_scale - source_scale).abs() < 1.0e-12);
+
+            let matrix_16_9 = responsive_group_matrix(&config, name, 1920.0, 1080.0, at_16_9);
+            let point_16_9 = [
+                matrix_16_9.a * source[0] + matrix_16_9.tx,
+                matrix_16_9.d * source[1] + matrix_16_9.ty,
+            ];
+            assert_eq!(point_16_9, source, "16:9 {name} group must be unchanged");
+
+            let matrix_4_3 = responsive_group_matrix(&config, name, 1440.0, 1080.0, at_4_3_root);
+            let point_4_3 = [
+                matrix_4_3.a * source[0] + matrix_4_3.tx,
+                matrix_4_3.d * source[1] + matrix_4_3.ty,
+            ];
+            assert!(
+                (point_4_3[0] - target[0]).abs() < 1.0e-9
+                    && (point_4_3[1] - target[1]).abs() < 1.0e-9,
+                "4:3 {name} center {point_4_3:?} should equal {target:?}"
+            );
+            assert!((matrix_4_3.a - source_scale).abs() < 1.0e-12);
+            assert!((matrix_4_3.d - source_scale).abs() < 1.0e-12);
+        }
+
+        // In the source Lua composition, the parent life object is centered at
+        // (960 + 705, 540 - 477.5) with scale 17.33%. Its 2560x600 image is
+        // drawn at native size. The fill region is the authored normalized
+        // rectangle [0.146875, 0.4666667, 0.6, 0.14] within that image.
+        // Keep the numbers at their separate authored profile coordinates.
+        let element_layout = |id: &str| {
+            config
+                .elements
+                .iter()
+                .find(|element| element.id == id)
+                .unwrap_or_else(|| panic!("missing {id}"))
+                .layout
+                .clone()
+        };
+        let life_center = [960.0 + 705.0, 540.0 + (-477.5)];
+        let life_scale = 17.33 / 100.0;
+        let panel_size = [2560.0 * life_scale, 600.0 * life_scale];
+        let panel_top_left = [
+            life_center[0] - panel_size[0] / 2.0,
+            life_center[1] - panel_size[1] / 2.0,
+        ];
+        let panel = element_layout("life-panel");
+        assert!((panel.x * 1920.0 - panel_top_left[0]).abs() < 1.0e-6);
+        assert!((panel.y * 1080.0 - panel_top_left[1]).abs() < 1.0e-6);
+        assert!((panel.width * 1920.0 - panel_size[0]).abs() < 1.0e-6);
+        assert!((panel.height * 1080.0 - panel_size[1]).abs() < 1.0e-6);
+
+        let fill_source = [0.146875, 0.4666666666666667, 0.6, 0.14];
+        let expected_gauge = [
+            panel_top_left[0] + fill_source[0] * 2560.0 * life_scale,
+            panel_top_left[1] + fill_source[1] * 600.0 * life_scale,
+            fill_source[2] * 2560.0 * life_scale,
+            fill_source[3] * 600.0 * life_scale,
+        ];
+        let gauge = element_layout("life-gauge");
+        let overflow_gauge = element_layout("life-overflow-gauge");
+        for layout in [gauge, overflow_gauge] {
+            assert!((layout.x * 1920.0 - expected_gauge[0]).abs() < 1.0e-6);
+            assert!((layout.y * 1080.0 - expected_gauge[1]).abs() < 1.0e-6);
+            assert!((layout.width * 1920.0 - expected_gauge[2]).abs() < 1.0e-6);
+            assert!((layout.height * 1080.0 - expected_gauge[3]).abs() < 1.0e-6);
+        }
+        assert!((element_layout("life-value").y * 1080.0 - 10.8).abs() < 1.0e-6);
+        assert!((element_layout("life-value-shadow").y * 1080.0 - 10.8).abs() < 1.0e-6);
+
+        // Intermediate aspect ratios interpolate between the authored source
+        // layouts; outside the reference range they clamp to the nearest
+        // layout while the root contain fit keeps sprites undistorted.
+        let at_3_2 = ui_root_matrix(1920.0, 1280.0, config.design_size, config.fit);
+        assert_eq!(at_3_2.a, 1.0);
+        assert_eq!(at_3_2.d, 1.0);
+        assert_eq!(at_3_2.ty, 100.0);
+        let at_3_2_group = responsive_group_matrix(&config, "score", 1920.0, 1280.0, at_3_2);
+        assert!(at_3_2_group.a < 1.0 && at_3_2_group.a > 0.746);
+
+        assert_eq!(config.elements.len(), 28);
+        assert!(config
+            .elements
+            .iter()
+            .all(|element| element.responsive_group.is_some()));
+    }
+
+    #[test]
+    fn sono_overlay_ap_glow_and_shadow_use_the_source_sinusoid() {
+        let mut state = UiGameplayState::default();
+        for (time, expected) in [(0.0, 0.5), (0.375, 1.0), (1.125, 0.0), (1.5, 0.5)] {
+            apply_note_hud_animations(&mut state, time, 30.0);
+            assert!(
+                (state.variables["ap_combo_alpha"] - expected).abs() < 1.0e-12,
+                "time={time} actual={}",
+                state.variables["ap_combo_alpha"]
+            );
+            assert_eq!(state.variables["combo_shadow_pulse_opacity"], 0.0);
+        }
+        for (time, expected) in [(0.0, 0.5), (0.5, 1.0), (1.5, 0.0)] {
+            apply_note_hud_animations(&mut state, time, 30.0);
+            assert!((state.variables["life_overflow_alpha"] - expected).abs() < 1.0e-12);
+        }
+        state.combo = 1;
+        state.variables.insert("combo_event_time".into(), 1.125);
+        apply_note_hud_animations(&mut state, 1.125, 30.0);
+        assert_eq!(state.variables["combo_pulse_opacity"], 1.0);
+        assert_eq!(state.variables["ap_combo_alpha"], 0.0);
+        assert_eq!(state.variables["combo_shadow_pulse_opacity"], 0.0);
+    }
+
+    #[test]
     fn overlay_combo_and_judgment_curves_are_timestamp_based_and_seekable() {
         let mut before = UiGameplayState::default();
         apply_note_hud_animations(&mut before, 2.0, 30.0);
         assert_eq!(before.variables["combo_pop_scale"], 1.0);
         assert_eq!(before.variables["combo_pulse_opacity"], 0.0);
         assert_eq!(before.variables["judgment_opacity"], 0.0);
+        assert_eq!(before.variables["judgment_visible"], 0.0);
 
         let mut at_event = UiGameplayState {
             combo: 1,
@@ -5457,22 +7034,40 @@ mod tests {
         assert_eq!(at_event.variables["combo_pulse_scale"], 0.5);
         assert_eq!(at_event.variables["combo_pulse_opacity"], 1.0);
         assert_eq!(at_event.variables["judgment_opacity"], 0.0);
+        assert_eq!(at_event.variables["judgment_scale"], 1.0);
+        assert_eq!(at_event.variables["judgment_visible"], 0.0);
 
         let mut during = at_event.clone();
         apply_note_hud_animations(&mut during, 2.0 + 8.0 / 30.0, 30.0);
         assert!((during.variables["combo_pop_scale"] - 1.0).abs() < 1e-12);
         assert!((during.variables["combo_pulse_scale"] - 1.0).abs() < 1e-12);
         assert!((during.variables["combo_pulse_opacity"] - 6.0 / 14.0).abs() < 1e-12);
-        assert!((during.variables["judgment_opacity"] - 2.0 / 3.0).abs() < 1e-12);
+        assert_eq!(during.variables["judgment_opacity"], 1.0);
+        assert_eq!(during.variables["judgment_scale"], 1.0);
+        assert_eq!(during.variables["judgment_visible"], 1.0);
 
         let mut judgment_in = at_event.clone();
         apply_note_hud_animations(&mut judgment_in, 2.0 + 2.0 / 30.0, 30.0);
-        let lua_curve_at_two = 2.0 / 3.0 - (-1.45 + 2.0 / 4.0_f64).powi(4) * (2.0 / 3.0);
-        assert!((judgment_in.variables["judgment_opacity"] - lua_curve_at_two).abs() < 1e-12);
+        let lua_scale_at_two = 1.0 - (-1.45 + 2.0 / 4.0_f64).powi(4);
+        assert!((judgment_in.variables["judgment_scale"] - lua_scale_at_two).abs() < 1e-12);
+        assert_eq!(judgment_in.variables["judgment_opacity"], 1.0);
+        assert_eq!(judgment_in.variables["judgment_visible"], 1.0);
+
+        let mut judgment_mid = at_event.clone();
+        apply_note_hud_animations(&mut judgment_mid, 2.0 + 3.0 / 30.0, 30.0);
+        assert!(
+            (judgment_mid.variables["judgment_scale"] - (1.0 - (-0.7_f64).powi(4))).abs() < 1e-12
+        );
+
+        let mut judgment_full = at_event.clone();
+        apply_note_hud_animations(&mut judgment_full, 2.0 + 5.0 / 30.0, 30.0);
+        assert_eq!(judgment_full.variables["judgment_scale"], 1.0);
+        assert_eq!(judgment_full.variables["judgment_opacity"], 1.0);
 
         let mut after = at_event.clone();
         apply_note_hud_animations(&mut after, 2.0 + 20.0 / 30.0, 30.0);
         assert_eq!(after.variables["judgment_opacity"], 0.0);
+        assert_eq!(after.variables["judgment_scale"], 0.0);
         assert_eq!(after.variables["judgment_visible"], 0.0);
         assert_eq!(after.variables["combo_pulse_opacity"], 0.0);
         let mut pulse_end = at_event.clone();
@@ -5511,6 +7106,214 @@ mod tests {
         apply_note_hud_animations(&mut backward_seek, 2.0 + 20.0 / 30.0, 30.0);
         apply_note_hud_animations(&mut backward_seek, 2.0 + 1.0 / 30.0, 30.0);
         assert_eq!(backward_seek.variables["combo_pop_scale"], earlier_value);
+    }
+
+    #[test]
+    fn overlay_frame_based_animation_ages_are_fps_aware_at_30_and_60() {
+        for fps in [30.0, 60.0] {
+            for age in [0.0, 1.0, 2.0, 4.0, 5.0, 8.0, 11.0, 13.0, 14.0, 19.0, 20.0] {
+                let event_time = 7.25;
+                let mut state = UiGameplayState {
+                    combo: 48,
+                    latest_event_time: Some(event_time),
+                    judgment: Some("PERFECT".into()),
+                    judgment_time: Some(event_time),
+                    ..UiGameplayState::default()
+                };
+                state
+                    .variables
+                    .insert("combo_event_time".into(), event_time);
+                apply_note_hud_animations(&mut state, event_time + age / fps, fps);
+
+                let combo_base_scale = (0.5 + age / 16.0).min(1.0);
+                let combo_pop_scale = 0.5 + age / 16.0;
+                assert!((state.variables["combo_pop_scale"] - combo_base_scale).abs() < 1e-12);
+                assert!((state.variables["combo_pulse_scale"] - combo_pop_scale).abs() < 1e-12);
+                assert_eq!(
+                    state.variables["combo_pulse_opacity"],
+                    (1.0 - age / 14.0).clamp(0.0, 1.0)
+                );
+                assert_eq!(
+                    state.variables["combo_pulse_visible"],
+                    if age < 14.0 { 1.0 } else { 0.0 }
+                );
+
+                let expected_judgment_scale = if age < 2.0 {
+                    1.0
+                } else if age < 5.0 {
+                    1.0 - (-1.45 + age / 4.0).powi(4)
+                } else if age < 20.0 {
+                    1.0
+                } else {
+                    0.0
+                };
+                let judgment_visible = (2.0..20.0).contains(&age);
+                assert!(
+                    (state.variables["judgment_scale"] - expected_judgment_scale).abs() < 1e-12,
+                    "fps={fps} age={age}"
+                );
+                let expected_judgment_visibility = if judgment_visible { 1.0 } else { 0.0 };
+                assert_eq!(
+                    state.variables["judgment_visible"],
+                    expected_judgment_visibility
+                );
+                assert_eq!(
+                    state.variables["judgment_opacity"],
+                    expected_judgment_visibility
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn perfect_reference_draw_argument_animates_scale_not_transparency() {
+        const WIDTH: u32 = 1920;
+        const HEIGHT: u32 = 1080;
+        let mut config = profile("default.json");
+        config
+            .elements
+            .retain(|element| element.id == "judgement-perfect");
+
+        let render_at_age = |age_frames: f64| {
+            let time = age_frames / 30.0;
+            let mut gameplay = UiGameplayState {
+                judgment: Some("PERFECT".into()),
+                judgment_time: Some(0.0),
+                ..UiGameplayState::default()
+            };
+            apply_note_hud_animations(&mut gameplay, time, 30.0);
+            let state = UiFrameState {
+                time,
+                frame_rate: 30.0,
+                gameplay: Some(gameplay),
+                ..UiFrameState::default()
+            };
+            let mut frame = rgb(WIDTH, HEIGHT, [0, 0, 0]);
+            render_gameplay_ui(&mut frame, WIDTH, HEIGHT, &config, &state).unwrap();
+            frame
+        };
+        let bounds = |frame: &[u8]| {
+            let mut min_x = WIDTH;
+            let mut min_y = HEIGHT;
+            let mut max_x = 0;
+            let mut max_y = 0;
+            let mut peak = 0_u8;
+            let mut found = false;
+            for y in 0..HEIGHT {
+                for x in 0..WIDTH {
+                    let offset = ((y * WIDTH + x) * 3) as usize;
+                    let pixel_peak = frame[offset..offset + 3].iter().copied().max().unwrap();
+                    peak = peak.max(pixel_peak);
+                    if pixel_peak > 2 {
+                        found = true;
+                        min_x = min_x.min(x);
+                        min_y = min_y.min(y);
+                        max_x = max_x.max(x);
+                        max_y = max_y.max(y);
+                    }
+                }
+            }
+            found.then_some((min_x, min_y, max_x, max_y, peak))
+        };
+
+        let before = render_at_age(1.0);
+        assert_eq!(
+            bounds(&before),
+            None,
+            "reference alpha is zero before frame 2"
+        );
+        let at_frame_two = render_at_age(2.0);
+        let (min_x, min_y, max_x, max_y, peak) = bounds(&at_frame_two).unwrap();
+        assert!((50..=70).contains(&(max_x - min_x + 1)));
+        assert!(
+            (8..=12).contains(&(max_y - min_y + 1)),
+            "frame 2 rendered bounds are x={min_x}..{max_x}, y={min_y}..{max_y}"
+        );
+        assert!(
+            peak > 200,
+            "visible judgment is opaque at frame 2, peak={peak}"
+        );
+        let at_frame_three = render_at_age(3.0);
+        let (min_x3, min_y3, max_x3, max_y3, peak3) = bounds(&at_frame_three).unwrap();
+        assert!(max_x3 - min_x3 > max_x - min_x);
+        assert!(max_y3 - min_y3 > max_y - min_y);
+        assert!(peak3 > 200);
+        let at_frame_five = render_at_age(5.0);
+        let (min_x5, min_y5, max_x5, max_y5, peak5) = bounds(&at_frame_five).unwrap();
+        assert!((290..=310).contains(&(max_x5 - min_x5 + 1)));
+        assert!(
+            (50..=58).contains(&(max_y5 - min_y5 + 1)),
+            "frame 5 rendered bounds are x={min_x5}..{max_x5}, y={min_y5}..{max_y5}"
+        );
+        assert!(peak5 > 200);
+        assert_eq!(
+            at_frame_five,
+            render_at_age(5.0),
+            "same seek must render identically"
+        );
+        assert_eq!(
+            bounds(&render_at_age(20.0)),
+            None,
+            "judgment disappears at frame 20"
+        );
+    }
+
+    #[test]
+    fn reference_hud_pop_and_judgment_are_visible_and_repeatable_at_arbitrary_times() {
+        let config = profile("default.json");
+        let render_at = |time: f64| {
+            let mut gameplay = UiGameplayState {
+                score: 123_456.0,
+                combo: 12,
+                life: 1_000.0,
+                judgment: Some("PERFECT".into()),
+                latest_event_time: Some(2.0),
+                judgment_time: Some(2.0),
+                ..UiGameplayState::default()
+            };
+            gameplay.variables.insert("combo_event_time".into(), 2.0);
+            gameplay
+                .variables
+                .insert("previous_combo_event_time".into(), 1.0);
+            apply_note_hud_animations(&mut gameplay, time, 30.0);
+            let state = UiFrameState {
+                time,
+                frame_rate: 30.0,
+                gameplay: Some(gameplay),
+                ..UiFrameState::default()
+            };
+            let mut frame = rgb(960, 540, [20, 25, 36]);
+            render_gameplay_ui(&mut frame, 960, 540, &config, &state).unwrap();
+            frame
+        };
+
+        let at_event = render_at(2.0);
+        let during_pop = render_at(2.0 + 8.0 / 30.0);
+        let repeated_seek = render_at(2.0 + 8.0 / 30.0);
+        assert_ne!(
+            at_event, during_pop,
+            "combo/judgment animation must change pixels"
+        );
+        assert_eq!(
+            during_pop, repeated_seek,
+            "seeking to one timestamp must be deterministic"
+        );
+
+        let mut combo_region_difference = 0_usize;
+        for y in 150..330 {
+            for x in 700..920 {
+                let offset = (y * 960 + x) * 3;
+                combo_region_difference += at_event[offset..offset + 3]
+                    .iter()
+                    .zip(&during_pop[offset..offset + 3])
+                    .map(|(left, right)| left.abs_diff(*right) as usize)
+                    .sum::<usize>();
+            }
+        }
+        assert!(
+            combo_region_difference > 10_000,
+            "combo region did not animate enough: {combo_region_difference}"
+        );
     }
 
     #[test]
@@ -5764,6 +7567,7 @@ mod tests {
             tx: 0.0,
             ty: 0.0,
             opacity: 1.0,
+            blend_mode: UiBlendMode::Normal,
         };
         draw_transformed_rect(
             &mut frame,
@@ -5778,6 +7582,7 @@ mod tests {
             },
             [255, 0, 0, 255],
             0.0,
+            None,
         );
         let at = (7 * 20 + 5) * 3;
         assert_eq!(&frame[at..at + 3], &[255, 0, 0]);
@@ -5795,6 +7600,77 @@ mod tests {
                 20
             ),
             Some((5, 7, 8, 11))
+        );
+    }
+
+    #[test]
+    fn animated_scale_transforms_bitmap_text_instead_of_only_its_alignment_box() {
+        fn rendered_bounds(scale: f64) -> (usize, usize) {
+            let mut config = RendererUiConfig::default();
+            config.enabled = true;
+            config.mode = GameplayUiMode::Custom;
+            config.intentionally_empty = false;
+            config.design_size = [100, 80];
+            config.elements.push(UiElement {
+                id: "animated-text".into(),
+                layout: UiLayout {
+                    x: 0.5,
+                    y: 0.5,
+                    width: 0.8,
+                    height: 0.8,
+                    anchor: UiAnchor::Center,
+                    ..UiLayout::default()
+                },
+                animations: vec![
+                    UiAnimation {
+                        property: UiAnimationProperty::ScaleX,
+                        from: scale,
+                        to: scale,
+                        ..UiAnimation::default()
+                    },
+                    UiAnimation {
+                        property: UiAnimationProperty::ScaleY,
+                        from: scale,
+                        to: scale,
+                        ..UiAnimation::default()
+                    },
+                ],
+                kind: UiElementKind::Text {
+                    text: "I".into(),
+                    value: None,
+                    color: [255, 255, 255, 255],
+                    font_size: 42.0,
+                    font: None,
+                    align: UiTextAlign::Center,
+                },
+                ..UiElement::default()
+            });
+            let mut frame = rgb(100, 80, [0, 0, 0]);
+            render_gameplay_ui(&mut frame, 100, 80, &config, &UiFrameState::default()).unwrap();
+            let (mut min_x, mut min_y, mut max_x, mut max_y) = (100, 80, 0, 0);
+            for y in 0..80 {
+                for x in 0..100 {
+                    let offset = (y * 100 + x) * 3;
+                    if frame[offset..offset + 3] != [0, 0, 0] {
+                        min_x = min_x.min(x);
+                        min_y = min_y.min(y);
+                        max_x = max_x.max(x);
+                        max_y = max_y.max(y);
+                    }
+                }
+            }
+            (max_x - min_x + 1, max_y - min_y + 1)
+        }
+
+        let normal = rendered_bounds(1.0);
+        let popped = rendered_bounds(0.5);
+        assert!(
+            normal.0 as f64 > popped.0 as f64 * 1.7,
+            "x size {normal:?} vs {popped:?}"
+        );
+        assert!(
+            normal.1 as f64 > popped.1 as f64 * 1.7,
+            "y size {normal:?} vs {popped:?}"
         );
     }
 
@@ -6075,6 +7951,73 @@ mod tests {
     }
 
     #[test]
+    fn missing_scoring_configuration_uses_auto_ap_and_manual_track_takes_precedence() {
+        let level = crate::formats::LevelData {
+            bgm_offset: Some(0.0),
+            entities: vec![
+                crate::formats::LevelEntity {
+                    archetype: serde_json::Value::String("#BPM_CHANGE".into()),
+                    data: serde_json::json!([
+                        { "name": "#BEAT", "value": 0.0 },
+                        { "name": "#BPM", "value": 120.0 }
+                    ]),
+                    extra: Default::default(),
+                },
+                crate::formats::LevelEntity {
+                    archetype: serde_json::Value::String("NormalTapNote".into()),
+                    data: serde_json::json!([{ "name": "#BEAT", "value": 1.0 }]),
+                    extra: Default::default(),
+                },
+            ],
+            metadata: None,
+            extra: serde_json::Map::new(),
+        };
+
+        let mut automatic = RendererUiConfig::default();
+        assert_eq!(
+            automatic.resolved_scoring_source(),
+            UiScoringSource::SonoOverlay
+        );
+        automatic.prepare_scoring_for_level(&level);
+        assert!(automatic.loaded_forecast.is_some());
+        assert!(automatic
+            .scoring_status()
+            .unwrap()
+            .starts_with("Gameplay values: Auto-generated All Perfect"));
+        assert_eq!(automatic.gameplay_state_at(0.0).unwrap().unwrap().combo, 0);
+        let first_note = automatic.gameplay_state_at(0.51).unwrap().unwrap();
+        assert_eq!(first_note.combo, 1);
+        assert!(first_note.variables["score_bonus"] > 0.0);
+        assert_eq!(
+            first_note.variables["score_bonus"],
+            first_note.variables["score_delta"]
+        );
+
+        let mut manual = RendererUiConfig::default();
+        manual.scoring = Some(UiScoringConfig::default());
+        manual.events_file = Some(PathBuf::from("manual-events.json"));
+        manual.prepare_scoring_for_level(&level);
+        assert_eq!(
+            manual.resolved_scoring_source(),
+            UiScoringSource::EventTrack
+        );
+        assert!(manual.loaded_forecast.is_none());
+        assert!(manual
+            .scoring_status()
+            .unwrap()
+            .starts_with("Gameplay values: Manually loaded event track"));
+
+        let mut disabled = RendererUiConfig::default();
+        disabled.scoring = Some(UiScoringConfig {
+            source: UiScoringSource::Disabled,
+            ..UiScoringConfig::default()
+        });
+        disabled.prepare_scoring_for_level(&level);
+        assert!(disabled.loaded_forecast.is_none());
+        assert!(disabled.gameplay_state_at(0.0).unwrap().is_none());
+    }
+
+    #[test]
     fn watch_state_variables_conditioned_styles_and_animations_change_pixels() {
         let (width, height) = (320, 180);
         let mut memory = crate::runtime::Memory::new();
@@ -6225,6 +8168,10 @@ mod tests {
                 advance: 1.0,
                 glyph_map: BTreeMap::new(),
                 glyph_assets: BTreeMap::new(),
+                glyph_scales: BTreeMap::new(),
+                glyph_advances: BTreeMap::new(),
+                center_spacing: None,
+                glyph_max_dimension: None,
             },
         );
         config.elements = vec![UiElement {
@@ -6272,6 +8219,10 @@ mod tests {
                 advance: 1.0,
                 glyph_map: BTreeMap::new(),
                 glyph_assets: BTreeMap::new(),
+                glyph_scales: BTreeMap::new(),
+                glyph_advances: BTreeMap::new(),
+                center_spacing: None,
+                glyph_max_dimension: None,
             },
         );
         config.load_external_data().unwrap();
@@ -6496,7 +8447,12 @@ mod tests {
         assert!(!report
             .unconfigured_element_families
             .contains(&"combo.glyph-family.p".into()));
-        assert_eq!(report.configured_elements, 26);
+        // The reference-based profile now includes the static combo shadow
+        // plus both persistent and event-pulse combo glyph layers.
+        assert_eq!(report.configured_elements, 28);
+        let combo_shadow = &imported.fonts["combo-burst"];
+        assert_eq!(combo_shadow.center_spacing, Some(108.0));
+        assert!(combo_shadow.glyph_advances.is_empty());
         assert!(imported
             .elements
             .iter()

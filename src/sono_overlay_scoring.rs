@@ -226,13 +226,14 @@ pub struct ForecastFrame {
     pub score_progress: f64,
     pub skill_active: bool,
     pub skill_activation_time: Option<f64>,
-    /// Timestamp of the latest positive-weight chart note. Skill markers and
-    /// skipped entities do not restart note HUD animations.
+    /// Timestamp of the latest `d` row used by Sono-Overlay's HUD. The source
+    /// writes both scoring notes and Skill activations to this timeline; a
+    /// Skill can restart the combo pop without changing score/combo/judgment.
     pub combo_event_time: Option<f64>,
-    /// Previous distinct scored-note timestamp, used by Sono-Overlay's
-    /// sub-frame combo animation fallback.
+    /// Previous timeline-row timestamp, used by Sono-Overlay's sub-frame
+    /// combo animation fallback.
     pub previous_combo_event_time: Option<f64>,
-    /// Latest accepted positive-weight note that can drive judgment artwork.
+    /// Latest positive-weight note that can drive judgment artwork.
     pub judgment_time: Option<f64>,
 }
 
@@ -291,14 +292,21 @@ impl Forecast {
 }
 
 impl Forecast {
-    /// State at or before a Watch-time timestamp. `partition_point` makes
-    /// direct seeks logarithmic and independent of prior preview requests.
+    /// State before a Watch-time timestamp, matching Sono-Overlay's strict
+    /// `event_time * fps < frame - OFFSET` selection rule. `partition_point`
+    /// makes direct seeks logarithmic and independent of prior preview requests.
     pub fn state_at(&self, time: f64) -> Option<&ForecastFrame> {
         if !time.is_finite() || self.frames.is_empty() {
             return None;
         }
-        let index = self.frames.partition_point(|frame| frame.time <= time);
-        index.checked_sub(1).map(|index| &self.frames[index])
+        let index = self.frames.partition_point(|frame| frame.time < time);
+        index
+            .checked_sub(1)
+            .map(|index| &self.frames[index])
+            // The synthetic initial row represents the reference's initialized
+            // time-zero state. It must remain available at t=0 even though a
+            // real event at t=0 is selected only after the strict boundary.
+            .or_else(|| (time == 0.0).then(|| &self.frames[0]))
     }
 }
 
@@ -366,34 +374,25 @@ fn inferred_rating(metadata: Option<&Value>) -> Option<f64> {
 }
 
 fn resolve_event_times(events: &mut [NoteEvent], changes: &[BpmChange]) -> Result<()> {
-    if changes.is_empty() {
-        bail!("the chart has no #BPM_CHANGE data; note times cannot be resolved");
-    }
     for event in events {
-        let Some(first) = changes.first() else {
-            unreachable!("BPM changes were checked above")
-        };
-        if event.beat < first.beat {
-            bail!(
-                "note entity {} at beat {} precedes the first BPM change at beat {}; the reference has no initial-BPM fallback",
-                event.source_entity,
-                event.beat,
-                first.beat
-            );
-        }
         let mut time = 0.0;
         for (index, change) in changes.iter().enumerate() {
             let Some(next) = changes.get(index + 1) else {
                 time += (event.beat - change.beat) * (60.0 / change.bpm);
                 break;
             };
-            if event.beat < next.beat {
+            if event.beat >= change.beat && event.beat < next.beat {
                 time += (event.beat - change.beat) * (60.0 / change.bpm);
                 break;
+            } else if event.beat >= next.beat {
+                time += (next.beat - change.beat) * (60.0 / change.bpm);
+            } else {
+                // The reference returns the accumulated zero when a beat is
+                // before the first BPM change.
+                break;
             }
-            time += (next.beat - change.beat) * (60.0 / change.bpm);
         }
-        if !time.is_finite() || time < 0.0 {
+        if !time.is_finite() {
             bail!(
                 "note entity {} resolved to an invalid time",
                 event.source_entity
@@ -514,14 +513,6 @@ pub fn extract_events_with_policy(
             .total_cmp(&right.beat)
             .then_with(|| left.source_entity.cmp(&right.source_entity))
     });
-    if let Some(pair) = changes.windows(2).find(|pair| pair[0].beat == pair[1].beat) {
-        bail!(
-            "chart has ambiguous duplicate BPM changes at beat {} (entities {} and {})",
-            pair[0].beat,
-            pair[0].source_entity,
-            pair[1].source_entity
-        );
-    }
     let diagnostics: Vec<_> = diagnostics.into_values().collect();
     if !weighted_note_count.is_finite()
         || (weighted_note_count <= 0.0
@@ -678,18 +669,23 @@ pub fn simulate(level: &LevelData, config: &ForecastConfig) -> Result<Forecast> 
         previous_combo_event_time: None,
         judgment_time: None,
     }];
-    let (mut combo_event_time, mut previous_combo_event_time, mut judgment_time) =
-        (None, None, None);
+    let mut combo_event_time = None;
+    let mut judgment_time = None;
     let mut last_judgment = None;
 
     for event in &events {
+        let previous_combo_event_time = combo_event_time;
         if event.skill_activation {
             if config.chart_skills_enabled {
                 skill_active_until = Some(event.time + 5.0);
                 skill_activation_time = Some(event.time);
             }
+            // ped.go emits a `d` timeline row for a Skill marker. sekai.obj2
+            // anchors the combo animation to PED_DATA.current.time, so the
+            // unchanged combo pop restarts at this time while score, combo,
+            // and judgment feedback remain untouched.
+            combo_event_time = Some(event.time);
         } else {
-            previous_combo_event_time = combo_event_time;
             combo_event_time = Some(event.time);
             judgment_time = (event.time > 0.0)
                 .then(|| config.judgment.clone())
@@ -757,6 +753,8 @@ pub fn simulate(level: &LevelData, config: &ForecastConfig) -> Result<Forecast> 
             judgment_time,
         });
     }
+
+    frames.sort_by(|left, right| left.time.total_cmp(&right.time));
 
     Ok(Forecast {
         supported_notes: events
@@ -832,39 +830,55 @@ mod tests {
     }
 
     #[test]
-    fn talent_and_chart_skill_markers_change_score_not_note_timing_or_combo() {
-        let source = level();
-        let mut config = ForecastConfig {
-            level_rating: Some(5.0),
-            team_power: 3_000.0,
-            ..Default::default()
-        };
-        let normal = simulate(&source, &config).unwrap();
-        let note = normal.state_at(0.5).unwrap();
-        assert_eq!(note.score, 3_000.0);
-        assert_eq!(note.combo, 1);
-        assert_eq!(note.judgment.as_deref(), Some("PERFECT"));
-        let later = normal.state_at(2.0).unwrap();
-        assert_eq!(later.combo, 3);
-        assert_eq!(later.score, 15_000.0);
+    fn bpm_conversion_matches_reference_zero_fallback_and_stable_same_beat_changes() {
+        let mut no_bpm = level();
+        no_bpm.entities.remove(0);
+        let extracted =
+            extract_events_with_policy(&no_bpm, false, ExtractionPolicy::Permissive).unwrap();
+        assert!(extracted.events.iter().all(|event| event.time == 0.0));
 
-        config.team_power *= 2.0;
-        let doubled_talent = simulate(&source, &config).unwrap();
-        assert_eq!(doubled_talent.state_at(0.5).unwrap().score, 6_000.0);
+        let mut before_first = level();
+        before_first.entities[0].data = json!([
+            { "name": "#BEAT", "value": 2.0 },
+            { "name": "#BPM", "value": 120.0 }
+        ]);
+        before_first.entities.insert(
+            1,
+            crate::formats::LevelEntity {
+                archetype: Value::String("#BPM_CHANGE".into()),
+                data: json!([
+                    { "name": "#BEAT", "value": 4.0 },
+                    { "name": "#BPM", "value": 60.0 }
+                ]),
+                extra: Default::default(),
+            },
+        );
+        let extracted =
+            extract_events_with_policy(&before_first, false, ExtractionPolicy::Permissive).unwrap();
         assert_eq!(
-            doubled_talent.state_at(2.0).unwrap().combo,
-            later.combo,
-            "talent must not change combo progression"
+            extracted.events[0].time, 0.0,
+            "pre-first-BPM beat follows ped.go"
         );
 
-        config.team_power = 3_000.0;
-        config.chart_skills_enabled = false;
-        let no_skills = simulate(&source, &config).unwrap();
-        assert_eq!(no_skills.state_at(2.0).unwrap().score, 12_000.0);
+        let mut same_beat = level();
+        same_beat.entities.insert(
+            1,
+            crate::formats::LevelEntity {
+                archetype: Value::String("#BPM_CHANGE".into()),
+                data: json!([
+                    { "name": "#BEAT", "value": 0.0 },
+                    { "name": "#BPM", "value": 60.0 }
+                ]),
+                extra: Default::default(),
+            },
+        );
+        let extracted =
+            extract_events_with_policy(&same_beat, false, ExtractionPolicy::Permissive).unwrap();
+        assert_eq!(extracted.events[0].time, 1.0);
     }
 
     #[test]
-    fn direct_seek_is_order_independent_and_includes_boundary_events() {
+    fn skill_rows_restart_combo_animation_without_scoring_or_judgment() {
         let forecast = simulate(
             &level(),
             &ForecastConfig {
@@ -874,12 +888,79 @@ mod tests {
             },
         )
         .unwrap();
-        let at_first = forecast.state_at(0.5).unwrap().clone();
-        let at_later = forecast.state_at(2.0).unwrap().clone();
-        assert_eq!(forecast.state_at(2.0), Some(&at_later));
-        assert_eq!(forecast.state_at(0.5), Some(&at_first));
+        let skill = forecast
+            .frames
+            .iter()
+            .find(|frame| frame.skill_activation)
+            .unwrap();
+        assert_eq!(skill.time, 1.5);
+        assert_eq!(skill.combo, 2);
+        assert_eq!(skill.score, 9_000.0);
+        assert_eq!(skill.combo_event_time, Some(1.5));
+        assert_eq!(skill.previous_combo_event_time, Some(1.0));
+        assert_eq!(skill.judgment_time, Some(1.0));
+        assert_eq!(skill.judgment.as_deref(), Some("PERFECT"));
+    }
+
+    #[test]
+    fn talent_and_chart_skill_markers_change_score_not_note_timing_or_combo() {
+        let source = level();
+        let mut config = ForecastConfig {
+            level_rating: Some(5.0),
+            team_power: 3_000.0,
+            ..Default::default()
+        };
+        let normal = simulate(&source, &config).unwrap();
+        let note = normal.state_at(0.5 + 1.0e-9).unwrap();
+        assert_eq!(note.score, 3_000.0);
+        assert_eq!(note.combo, 1);
+        assert_eq!(note.judgment.as_deref(), Some("PERFECT"));
+        let later = normal.state_at(2.0 + 1.0e-9).unwrap();
+        assert_eq!(later.combo, 3);
+        assert_eq!(later.score, 15_000.0);
+
+        config.team_power *= 2.0;
+        let doubled_talent = simulate(&source, &config).unwrap();
+        assert_eq!(
+            doubled_talent.state_at(0.5 + 1.0e-9).unwrap().score,
+            6_000.0
+        );
+        assert_eq!(
+            doubled_talent.state_at(2.0 + 1.0e-9).unwrap().combo,
+            later.combo,
+            "talent must not change combo progression"
+        );
+
+        config.team_power = 3_000.0;
+        config.chart_skills_enabled = false;
+        let no_skills = simulate(&source, &config).unwrap();
+        assert_eq!(no_skills.state_at(2.0 + 1.0e-9).unwrap().score, 12_000.0);
+    }
+
+    #[test]
+    fn direct_seek_is_order_independent_and_matches_strict_reference_boundaries() {
+        let forecast = simulate(
+            &level(),
+            &ForecastConfig {
+                level_rating: Some(5.0),
+                team_power: 3_000.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let exactly_first = forecast.state_at(0.5).unwrap();
+        assert_eq!(
+            exactly_first.combo, 0,
+            "reference uses a strict event-time comparison"
+        );
+        let at_first = forecast.state_at(0.5 + 1.0e-9).unwrap().clone();
+        let exactly_later = forecast.state_at(2.0).unwrap();
+        assert_eq!(exactly_later.combo, 2);
+        let at_later = forecast.state_at(2.0 + 1.0e-9).unwrap().clone();
+        assert_eq!(forecast.state_at(2.0 + 1.0e-9), Some(&at_later));
+        assert_eq!(forecast.state_at(0.5 + 1.0e-9), Some(&at_first));
         assert_eq!(forecast.state_at(0.499).unwrap().combo, 0);
-        assert_eq!(forecast.state_at(2.0).unwrap().combo, 3);
+        assert_eq!(at_later.combo, 3);
     }
 
     #[test]
@@ -892,13 +973,13 @@ mod tests {
             ..Default::default()
         };
         let forecast = simulate(&source, &config).unwrap();
-        assert_eq!(forecast.state_at(0.5).unwrap().score, 3.0);
-        assert_eq!(forecast.state_at(1.0).unwrap().score, 6.0);
+        assert_eq!(forecast.state_at(0.5 + 1.0e-9).unwrap().score, 3.0);
+        assert_eq!(forecast.state_at(1.0 + 1.0e-9).unwrap().score, 6.0);
         config.score_mode = ScoreMode::Standard;
         assert_eq!(
             simulate(&source, &config)
                 .unwrap()
-                .state_at(1.0)
+                .state_at(1.0 + 1.0e-9)
                 .unwrap()
                 .score,
             9_000.0
@@ -932,8 +1013,8 @@ mod tests {
         assert_eq!(base.weighted_note_count, 5.0);
         assert_eq!(all_flick.weighted_note_count, 7.0);
         assert_eq!(all_flick.rank_weighted_note_count, 5.0);
-        assert_eq!(base.state_at(0.5).unwrap().score, 6_400.0);
-        assert_eq!(all_flick.state_at(0.5).unwrap().score, 6_857.0);
+        assert_eq!(base.state_at(0.5 + 1.0e-9).unwrap().score, 6_400.0);
+        assert_eq!(all_flick.state_at(0.5 + 1.0e-9).unwrap().score, 6_857.0);
     }
 
     #[test]
@@ -952,7 +1033,7 @@ mod tests {
         let forecast = simulate(&unsupported, &config).unwrap();
         assert!(forecast.potentially_incomplete());
         assert_eq!(forecast.supported_notes, 3);
-        assert_eq!(forecast.state_at(2.0).unwrap().combo, 3);
+        assert_eq!(forecast.state_at(2.0 + 1.0e-9).unwrap().combo, 3);
         assert_eq!(
             forecast.diagnostics.len(),
             1,
@@ -1034,6 +1115,54 @@ mod tests {
     }
 
     #[test]
+    fn real_displayholic_fixture_generates_deterministic_all_perfect_note_events() {
+        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let level = crate::formats::load_level(&repository.join(
+            "TestingSuite/Next Sekai Engine/levels/ABM - DISPLAYHOLIC/displayholic full.json.gz",
+        ))
+        .expect("checked-in DISPLAYHOLIC chart fixture");
+        let forecast = simulate(&level, &ForecastConfig::default())
+            .expect("recognized notes in DISPLAYHOLIC should be forecastable");
+        assert!(forecast.supported_notes > 0);
+        assert!(forecast
+            .events
+            .windows(2)
+            .all(|pair| pair[0].time <= pair[1].time));
+        assert!(forecast
+            .events
+            .iter()
+            .filter(|event| !event.skill_activation)
+            .all(|event| event.combo_contribution == 1 && event.weight > 0.0));
+        for non_scoring in [
+            "CameraChange",
+            "StageMaskChange",
+            "StagePivotChange",
+            "StageStyleChange",
+            "StageTransformChange",
+            "#BPM_CHANGE",
+            "#TIMESCALE_CHANGE",
+        ] {
+            assert!(
+                forecast
+                    .events
+                    .iter()
+                    .all(|event| event.archetype != non_scoring),
+                "non-scoring entity {non_scoring} must not generate an AP event"
+            );
+        }
+        let last_note = forecast
+            .events
+            .iter()
+            .rev()
+            .find(|event| !event.skill_activation)
+            .expect("chart has scoring notes");
+        let state = forecast.state_at(last_note.time + 1.0e-9).unwrap();
+        assert_eq!(state.combo, forecast.supported_notes as i64);
+        assert!(state.score > 0.0);
+        assert_eq!(state.judgment.as_deref(), Some("PERFECT"));
+    }
+
+    #[test]
     fn real_next_sekai_chart_has_deterministic_note_progression() {
         let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let level = crate::formats::load_level(
@@ -1061,11 +1190,59 @@ mod tests {
             .find(|event| !event.skill_activation)
             .unwrap();
         let before = forecast.state_at((first.time - 0.001).max(0.0)).unwrap();
-        let after = forecast.state_at(first.time).unwrap();
+        let at_boundary = forecast.state_at(first.time).unwrap();
+        assert_eq!(at_boundary.combo, before.combo);
+        let after = forecast.state_at(first.time + 1.0e-9).unwrap();
         assert!(after.combo > before.combo);
         assert!(after.score > before.score);
         assert_eq!(after.judgment.as_deref(), Some("PERFECT"));
         let later = forecast.state_at(first.time + 2.0).unwrap().clone();
         assert_eq!(forecast.state_at(first.time + 2.0), Some(&later));
+    }
+
+    #[test]
+    fn baumkuchen_reference_video_score_and_combo_samples_match() {
+        let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let level = crate::formats::load_level(
+            &repository.join("TestingSuite/Next Sekai Engine/levels/Various Artists - Baumkuchen x Retry Now/Baumkuchen x Retry Now.json.gz"),
+        )
+        .expect("checked-in Baumkuchen chart fixture");
+        // The reference clip does not include its original Sono-Overlay CLI
+        // settings. These explicit values are the closest fit to its displayed
+        // samples; they are not defaults and do not infer a universal rating.
+        let forecast = simulate(
+            &level,
+            &ForecastConfig {
+                team_power: 323_000.0,
+                level_rating: Some(14.0),
+                ..ForecastConfig::default()
+            },
+        )
+        .expect("Baumkuchen scoring is covered by the verified map");
+
+        // Values read from TestingSuite/ui_ref/baumkuchen x retry now
+        // preview.mp4. The reference media timestamp has a small unknown
+        // intro/offset component, so sample the corresponding chart states.
+        let samples = [
+            (2.64, 6, 11_374.0),
+            (6.80, 33, 65_308.0),
+            (8.80, 46, 89_523.0),
+            (10.64, 56, 120_709.0),
+        ];
+        for (chart_time, expected_combo, expected_score) in samples {
+            let state = forecast
+                .state_at(chart_time)
+                .expect("forecast contains an initial state");
+            assert_eq!(
+                state.combo, expected_combo,
+                "combo at chart time {chart_time:.2}s"
+            );
+            assert!(
+                (state.score - expected_score).abs() <= 15.0,
+                "score at chart time {chart_time:.2}s: expected about {expected_score:.0}, got {:.0}",
+                state.score
+            );
+            assert_eq!(state.judgment.as_deref(), Some("PERFECT"));
+        }
     }
 }

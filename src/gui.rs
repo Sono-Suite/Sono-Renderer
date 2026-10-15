@@ -2554,6 +2554,8 @@ impl Desktop {
             project.overrides.width = previous.overrides.width;
             project.overrides.height = previous.overrides.height;
             project.overrides.layers = previous.overrides.layers;
+            project.overrides.apply_engine_background_rotation =
+                previous.overrides.apply_engine_background_rotation;
             project.overrides.extra = previous.overrides.extra;
             if previous.profile.is_some() {
                 project.profile = previous.profile;
@@ -3702,10 +3704,21 @@ impl Desktop {
         ui.collapsing("Gameplay scoring", |ui| {
             ui.label("Chart simulation is a deterministic Sono-Overlay all-perfect forecast, not recorded player performance. Verified non-scoring entities are ignored; unknown beat-bearing archetypes are skipped with a best-effort warning while recognized notes continue. Use an authoritative event track for actual judgments and life changes.");
             if self.config.ui.scoring.is_none() {
+                match self.config.ui.resolved_scoring_source() {
+                    crate::render_ui::UiScoringSource::EventTrack => {
+                        ui.label("Gameplay values: A manually supplied event track takes precedence; configure event mappings to use its events.");
+                    }
+                    crate::render_ui::UiScoringSource::Disabled => {
+                        ui.label("Gameplay values are disabled.");
+                    }
+                    crate::render_ui::UiScoringSource::Automatic
+                    | crate::render_ui::UiScoringSource::SonoOverlay => {
+                        ui.label("Gameplay values: Auto-generated All Perfect when a chart is previewed or exported.");
+                    }
+                }
                 ui.horizontal(|ui| {
-                    if ui.button("Enable Sono-Overlay simulation").clicked() {
-                        let mut scoring = crate::render_ui::UiScoringConfig::default();
-                        scoring.source = crate::render_ui::UiScoringSource::SonoOverlay;
+                    if ui.button("Configure All Perfect scoring").clicked() {
+                        let scoring = crate::render_ui::UiScoringConfig::default();
                         self.config.ui.scoring = Some(scoring);
                     }
                     if ui.button("Configure event mappings").clicked() {
@@ -3715,7 +3728,6 @@ impl Desktop {
                     }
                 });
                 if self.config.ui.scoring.is_none() {
-                    ui.label("Gameplay values are currently disabled.");
                     return;
                 }
             }
@@ -4281,6 +4293,10 @@ impl Desktop {
                                                 advance: 1.0,
                                                 glyph_map: Default::default(),
                                                 glyph_assets: Default::default(),
+                                                glyph_scales: Default::default(),
+                                                glyph_advances: Default::default(),
+                                                center_spacing: None,
+                                                glyph_max_dimension: None,
                                             },
                                         );
                                     font.glyph_assets.insert(character_key, asset);
@@ -4350,6 +4366,10 @@ impl Desktop {
                                             advance: 1.0,
                                             glyph_map: Default::default(),
                                             glyph_assets: Default::default(),
+                                            glyph_scales: Default::default(),
+                                            glyph_advances: Default::default(),
+                                            center_spacing: None,
+                                            glyph_max_dimension: None,
                                         },
                                     );
                                 font.glyph_assets.insert(character.to_owned(), asset);
@@ -4386,6 +4406,10 @@ impl Desktop {
                                         advance: 1.0,
                                         glyph_map: Default::default(),
                                         glyph_assets: Default::default(),
+                                        glyph_scales: Default::default(),
+                                        glyph_advances: Default::default(),
+                                        center_spacing: None,
+                                        glyph_max_dimension: None,
                                     },
                                 );
                             }
@@ -4505,6 +4529,7 @@ impl Desktop {
                             prefix: String::new(),
                             suffix: String::new(),
                             digits: 0,
+                            max_digits: None,
                             color: [255, 255, 255, 255],
                             font_size: 42.0,
                             font: None,
@@ -4874,6 +4899,7 @@ impl Desktop {
         ui.separator();
         ui.heading("Gameplay values");
         if let Some(path) = self.config.ui.events_file.clone() {
+            ui.label("Gameplay values: Manually loaded event track (overrides the automatic All Perfect forecast).");
             ui.label(format!(
                 "Event track: {} ({} events)",
                 path.display(),
@@ -4889,7 +4915,18 @@ impl Desktop {
             ));
             ui.label("Event values come from this event track and the profile rules below. The frame renderer applies events in Watch-time order.");
         } else {
-            ui.label("No event track is loaded. Watch renders chart visuals, but does not produce player score, combo, life, or judgment events. The renderer will not infer or fabricate them.");
+            match self.config.ui.resolved_scoring_source() {
+                crate::render_ui::UiScoringSource::Automatic
+                | crate::render_ui::UiScoringSource::SonoOverlay => {
+                    ui.label("Gameplay values: Auto-generated All Perfect from recognized chart notes for preview and export.");
+                }
+                crate::render_ui::UiScoringSource::EventTrack => {
+                    ui.label("Gameplay values: Event track selected, but no event file is loaded.");
+                }
+                crate::render_ui::UiScoringSource::Disabled => {
+                    ui.label("Gameplay values are disabled. Watch rendering still runs normally.");
+                }
+            }
         }
         ui.horizontal(|ui| {
             if ui.button("Load / replace event track...").clicked() {
@@ -4902,6 +4939,10 @@ impl Desktop {
                 if let Some(path) = dialog.pick_file() {
                     let mut candidate = self.config.ui.clone();
                     candidate.events_file = Some(path.clone());
+                    candidate
+                        .scoring
+                        .get_or_insert_with(crate::render_ui::UiScoringConfig::default)
+                        .source = crate::render_ui::UiScoringSource::EventTrack;
                     match candidate.load_external_data() {
                         Ok(()) => {
                             self.config.ui = candidate;
@@ -4922,12 +4963,15 @@ impl Desktop {
             if self.config.ui.events_file.is_some() && ui.button("Remove event track").clicked() {
                 let mut candidate = self.config.ui.clone();
                 candidate.events_file = None;
+                if let Some(scoring) = &mut candidate.scoring {
+                    if scoring.source == crate::render_ui::UiScoringSource::EventTrack {
+                        scoring.source = crate::render_ui::UiScoringSource::Automatic;
+                    }
+                }
                 match candidate.load_external_data() {
                     Ok(()) => {
                         self.config.ui = candidate;
-                        self.summary =
-                            "Removed gameplay event track. Event-driven values are unavailable."
-                                .into();
+                        self.summary = "Removed event track. Chart preview and export use automatic All Perfect values.".into();
                         self.error = false;
                     }
                     Err(error) => {
@@ -12656,8 +12700,23 @@ impl Desktop {
             self.config.mv.is_some() && self.config.mv_enabled,
             egui::Slider::new(&mut self.config.mv_background, 0.0..=100.0).text("Background %"),
         );
+        if ui
+            .add_enabled(
+                self.config.mv.is_some() && self.config.mv_enabled,
+                egui::Checkbox::new(
+                    &mut self.config.apply_engine_background_rotation,
+                    "Apply engine-driven background rotation",
+                ),
+            )
+            .changed()
+        {
+            if let Some(project) = &mut self.project {
+                project.overrides.apply_engine_background_rotation =
+                    Some(self.config.apply_engine_background_rotation);
+            }
+        }
         ui.label(
-            "Presentation brightness toward black, before gameplay. Media timing is unchanged.",
+            "Presentation brightness is applied before gameplay. When enabled, the engine's Runtime Background transform also affects selected MV footage; gameplay, HUD, and watermark stay in screen space.",
         );
         ui.add_space(16.0);
         ui.heading("Layers");

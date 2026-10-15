@@ -92,6 +92,7 @@ pub struct FrameSession<'a> {
     stepper: WatchFrameStepper<'a>,
     mv: Option<crate::export_mv::MvDecoder>,
     render: std::sync::Arc<FrameRenderResources>,
+    apply_engine_background_rotation: bool,
     profile: bool,
     runtime_construction: std::time::Duration,
     atlas_identity_preparation: std::time::Duration,
@@ -108,6 +109,7 @@ pub(crate) struct FrameRenderResources {
     skin: formats::SkinAssets,
     skin_atlas_identity: Option<crate::gpu_render::AtlasIdentity>,
     background: Option<formats::BackgroundAssets>,
+    background_reference_quad: Option<[[f64; 2]; 4]>,
     background_atlas_identity: Option<crate::gpu_render::AtlasIdentity>,
     bindings: BTreeMap<u32, String>,
     particles: Option<formats::ParticleAssets>,
@@ -136,6 +138,7 @@ impl FrameRenderResources {
 pub(crate) struct PreparedFrame {
     pub(crate) report: FrameReport,
     mv_frame: Option<std::sync::Arc<crate::export_mv::MvFrame>>,
+    apply_engine_background_rotation: bool,
     particle_draws: Option<Vec<crate::particles::ParticleSpriteDraw>>,
     ui_state: crate::render_ui::UiFrameState,
     vm: std::time::Duration,
@@ -886,11 +889,16 @@ impl<'a> FrameSession<'a> {
                 .with_context(|| format!("resolving selected background resource {name:?}"))
             })
             .transpose()?;
-        if let Some(assets) = background.as_ref() {
-            let quad = assets.data.runtime_quad(
-                f64::from(width) / f64::from(height),
-                f64::from(assets.width) / f64::from(assets.height),
-            )?;
+        let background_reference_quad = background
+            .as_ref()
+            .map(|assets| {
+                assets.data.runtime_quad(
+                    f64::from(width) / f64::from(height),
+                    f64::from(assets.width) / f64::from(assets.height),
+                )
+            })
+            .transpose()?;
+        if let Some(quad) = background_reference_quad {
             runtime.set_runtime_background_quad(quad)?;
         }
         let atlas_identity_start = profile.then(std::time::Instant::now);
@@ -925,6 +933,7 @@ impl<'a> FrameSession<'a> {
             skin,
             skin_atlas_identity,
             background,
+            background_reference_quad,
             background_atlas_identity,
             bindings,
             particles,
@@ -948,6 +957,7 @@ impl<'a> FrameSession<'a> {
             stepper,
             mv: None,
             render,
+            apply_engine_background_rotation: false,
             profile,
             runtime_construction,
             atlas_identity_preparation,
@@ -960,6 +970,10 @@ impl<'a> FrameSession<'a> {
         if let Some(mv) = &mut self.mv {
             mv.set_background_percentage(percent);
         }
+    }
+
+    pub(crate) fn set_apply_engine_background_rotation(&mut self, enabled: bool) {
+        self.apply_engine_background_rotation = enabled;
     }
 
     pub(crate) fn configure_mv(
@@ -1141,6 +1155,7 @@ impl<'a> FrameSession<'a> {
         let preparation = preparation_start.map(|t| t.elapsed()).unwrap_or_default();
         Ok(PreparedFrame {
             mv_frame,
+            apply_engine_background_rotation: self.apply_engine_background_rotation,
             report,
             particle_draws,
             ui_state,
@@ -1161,6 +1176,7 @@ pub(crate) fn render_prepared_frame(
     let PreparedFrame {
         report,
         mv_frame,
+        apply_engine_background_rotation,
         particle_draws,
         ui_state,
         vm,
@@ -1179,10 +1195,20 @@ pub(crate) fn render_prepared_frame(
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Runtime Background quad has invalid length"))?;
-    let background = mv_frame
-        .as_ref()
-        .map(|frame| (&frame.assets, frame.quad))
-        .or_else(|| resources.background.as_ref().map(|assets| (assets, quad)));
+    let background = if let Some(frame) = mv_frame.as_ref() {
+        let mv_quad = if apply_engine_background_rotation {
+            let reference = resources.background_reference_quad.context(
+                "engine background rotation needs the selected Sonolus background geometry",
+            )?;
+            crate::runtime::transfer_runtime_background_transform(reference, quad, frame.quad)
+                .context("transferring Runtime Background transform to MV footage")?
+        } else {
+            frame.quad
+        };
+        Some((&frame.assets, mv_quad))
+    } else {
+        resources.background.as_ref().map(|assets| (assets, quad))
+    };
     let mut rgb = match resources.backend {
         crate::render::RenderBackend::Cpu => report.display_list.render_skin_rgb_with_mode(
             resources.width,

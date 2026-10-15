@@ -1260,6 +1260,10 @@ mod tests {
                 advance: 0.9,
                 glyph_map: BTreeMap::from([("M".into(), 0)]),
                 glyph_assets: BTreeMap::new(),
+                glyph_scales: BTreeMap::new(),
+                glyph_advances: BTreeMap::new(),
+                center_spacing: None,
+                glyph_max_dimension: None,
             },
         );
         config.attribution.font = Some("custom-sparse".into());

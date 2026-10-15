@@ -121,6 +121,155 @@ fn canonical_next_rush_normal_holds_schedule_three_matched_intervals() {
 }
 
 #[test]
+fn choose_your_fighter_fake_hold_uses_engine_requested_sfx_and_seeks_deterministically() {
+    use renderer::{
+        formats,
+        watch_diagnostics::{TraceConfig, TraceFilter, WatchTrace},
+        watch_runtime::WatchRuntime,
+    };
+    use serde_json::Value;
+    use std::{collections::BTreeMap, path::Path};
+
+    let engine_path = Path::new("TestingSuite/Next RUSH Official (2).zip");
+    let level_path = Path::new(
+        "TestingSuite/Next Sekai Engine/levels/Ava Max - Choose Your Fighter/Choose_Your_Fighter_1791912757.json.gz",
+    );
+    let resources = Path::new("TestingSuite/proseka_official+2.scp");
+    if !engine_path.is_file() || !level_path.is_file() || !resources.is_file() {
+        eprintln!("Choose Your Fighter local fixture unavailable; generic loop tests still run");
+        return;
+    }
+
+    let engine = formats::load_engine(engine_path).unwrap();
+    let level = formats::load_level(level_path).unwrap();
+    let clip_names = formats::load_effect_clip_names(resources, "coconut-next-sekai-1").unwrap();
+    let effect_names = renderer::offline::effect_clip_bindings(&engine.watch).unwrap();
+
+    let configured_runtime = || {
+        let mut runtime = WatchRuntime::new(&engine.watch, &level).unwrap();
+        runtime.bind_engine_rom(&engine.rom).unwrap();
+        runtime
+            .bind_engine_option_defaults(&engine.configuration)
+            .unwrap();
+        runtime
+            .bind_engine_ui_configuration(&engine.configuration)
+            .unwrap();
+        runtime.bind_effect_clip_names(&clip_names).unwrap();
+        runtime
+    };
+
+    let trace = WatchTrace::new(TraceConfig {
+        capacity: 100_000,
+        filters: vec![TraceFilter {
+            kinds: ["audio".to_owned()].into(),
+            ..Default::default()
+        }],
+    })
+    .unwrap();
+    for (id, name) in &effect_names {
+        trace.lock().unwrap().effect_names.insert(*id, name.clone());
+    }
+
+    let mut runtime = configured_runtime();
+    runtime.context.execution_trace = Some(trace.clone());
+    let first = runtime.frame(0.0).unwrap();
+    assert_eq!(first.scheduled_looped_effects.len(), 3);
+    assert_eq!(first.scheduled_looped_effect_stops.len(), 3);
+    let starts = first
+        .scheduled_looped_effects
+        .iter()
+        .map(|event| (event.instance_id, (event.clip_id, event.start_time)))
+        .collect::<BTreeMap<_, _>>();
+    let stops = first
+        .scheduled_looped_effect_stops
+        .iter()
+        .map(|event| (event.instance_id, event.end_time))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(starts.len(), stops.len());
+    for (handle, (clip_id, start_time)) in &starts {
+        assert_eq!(effect_names.get(clip_id).map(String::as_str), Some("#HOLD"));
+        let end_time = stops.get(handle).unwrap();
+        assert!(
+            start_time < end_time,
+            "loop {handle} has a nonpositive interval"
+        );
+    }
+
+    let connector_ids_for_fake_hold = level
+        .entities
+        .iter()
+        .enumerate()
+        .filter(|(_, entity)| entity.archetype.as_str() == Some("Connector"))
+        .filter(|(_, connector)| {
+            connector.data.as_array().is_some_and(|data| {
+                data.iter().any(|field| {
+                    field
+                        .get("ref")
+                        .and_then(Value::as_str)
+                        .is_some_and(|reference| {
+                            level.entities.iter().any(|candidate| {
+                                candidate.extra.get("name").and_then(Value::as_str)
+                                    == Some(reference)
+                                    && candidate.archetype.as_str().is_some_and(|name| {
+                                        name.starts_with("Fake") && name.contains("Head")
+                                    })
+                            })
+                        })
+                })
+            })
+        })
+        .map(|(index, _)| index)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(!connector_ids_for_fake_hold.is_empty());
+
+    let trace_file = tempfile::NamedTempFile::new().unwrap();
+    trace
+        .lock()
+        .unwrap()
+        .write_jsonl(trace_file.path())
+        .unwrap();
+    let records = std::fs::read_to_string(trace_file.path())
+        .unwrap()
+        .lines()
+        .skip(1)
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let loop_records = records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record["operation"].as_str(),
+                Some("PlayLoopedScheduled" | "StopLoopedScheduled")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(loop_records.len(), 6);
+    assert!(loop_records.iter().all(|record| {
+        record["archetype"] == "Connector"
+            && connector_ids_for_fake_hold
+                .contains(&(record["entity"].as_u64().unwrap_or(u64::MAX) as usize))
+            && record["data"]["effect_name"] == "#HOLD"
+    }));
+
+    // Preprocessing captured each absolute schedule once; advancing into the
+    // active first hold and constructing a fresh runtime at that timestamp add
+    // no frame-dependent duplicates or orphan stops.
+    let next = runtime.frame(2.9).unwrap();
+    assert!(next.scheduled_looped_effects.is_empty());
+    assert!(next.scheduled_looped_effect_stops.is_empty());
+    let mut directly_sought = configured_runtime();
+    let sought = directly_sought.frame(2.9).unwrap();
+    assert_eq!(
+        sought.scheduled_looped_effects,
+        first.scheduled_looped_effects
+    );
+    assert_eq!(
+        sought.scheduled_looped_effect_stops,
+        first.scheduled_looped_effect_stops
+    );
+}
+
+#[test]
 fn switch_matches_test_values_and_evaluates_only_selected_consequent() {
     let nodes: Vec<EngineNode> = serde_json::from_value(json!([
         {"value":2.5}, {"value":7}, {"value":10000}, {"value":0},

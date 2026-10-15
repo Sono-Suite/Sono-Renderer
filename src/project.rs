@@ -106,6 +106,9 @@ pub struct ProjectOverrides {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub layers: Option<crate::render::RenderLayers>,
+    /// Per-project override for applying Watch Runtime Background geometry
+    /// to a selected MV source.
+    pub apply_engine_background_rotation: Option<bool>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -163,6 +166,7 @@ impl RenderProject {
             profile,
             overrides: ProjectOverrides {
                 output: config.output.clone(),
+                apply_engine_background_rotation: Some(config.apply_engine_background_rotation),
                 ..ProjectOverrides::default()
             },
             ..Self::default()
@@ -343,6 +347,9 @@ impl RenderProject {
         }
         if let Some(value) = &self.overrides.layers {
             config.layers = value.clone();
+        }
+        if let Some(value) = self.overrides.apply_engine_background_rotation {
+            config.apply_engine_background_rotation = value;
         }
         config.ui.migrate_legacy_empty_default();
         config
@@ -1104,6 +1111,7 @@ mod tests {
         let project_path = directory.path().join("chart.sonoproject");
         let mut project = RenderProject::default();
         project.inputs.engine = Some(engine.clone());
+        project.overrides.apply_engine_background_rotation = Some(true);
         project.profile = Some(ProjectProfileRef {
             id: Some("stable-profile-id".into()),
             name: Some("Stable profile".into()),
@@ -1114,6 +1122,10 @@ mod tests {
             .insert("future_field".into(), Value::String("preserved".into()));
         project.save(&project_path).unwrap();
         let loaded = RenderProject::load(&project_path).unwrap();
+        assert_eq!(
+            loaded.overrides.apply_engine_background_rotation,
+            Some(true)
+        );
         assert_eq!(loaded.extra["future_field"], "preserved");
         assert_eq!(
             loaded.profile.as_ref().unwrap().extra["future_profile_hint"],

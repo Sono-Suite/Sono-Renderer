@@ -153,6 +153,7 @@ pub struct ExportRequest<'a> {
     pub music: &'a Path,
     pub mv: Option<&'a Path>,
     pub mv_background: f64,
+    pub apply_engine_background_rotation: bool,
     pub resource_overrides: &'a crate::render::ResourceOverrides,
     pub output: &'a Path,
     pub start_time: f64,
@@ -249,6 +250,7 @@ fn export_config_with_tools_controlled(
             music: config.music.as_deref().unwrap_or(&config.resources),
             mv: config.mv.as_deref().filter(|_| config.mv_enabled),
             mv_background: config.mv_background,
+            apply_engine_background_rotation: config.apply_engine_background_rotation,
             resource_overrides: &config.resource_overrides,
             output,
             start_time: config.start_time,
@@ -566,6 +568,7 @@ fn export_using_tools_controlled(
             request.watch_random_seed,
         )?;
         session.set_parallel_updates(request.parallel_watch_updates, request.watch_workers)?;
+        session.set_apply_engine_background_rotation(request.apply_engine_background_rotation);
         if sono_gcc_metrics.borrow().is_none() {
             *sono_gcc_metrics.borrow_mut() = session.performance_compile_metrics();
         }
@@ -2076,7 +2079,7 @@ mod tests {
 
     #[test]
     #[ignore = "real FFmpeg export integration: run explicitly for the current Windows toolchain"]
-    fn real_sono_overlay_chart_export_contains_gameplay_ui() {
+    fn real_automatic_ap_chart_export_contains_gameplay_ui() {
         let tools = crate::export_mv::tests::tools()
             .expect("checked-in FFmpeg 8.1 pair for real export validation");
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2112,7 +2115,28 @@ mod tests {
         config.backend = crate::render::RenderBackend::Cpu;
         config.ui = crate::render_ui::RendererUiConfig::reference_default();
         config.ui.enabled = true;
-        config.ui.scoring.as_mut().unwrap().forecast.level_rating = Some(14.0);
+        // Exercise the user-facing default: no scoring block and no manual
+        // event file. The shared render session must prepare All Perfect data.
+        config.ui.scoring = None;
+        assert_eq!(
+            config.ui.resolved_scoring_source(),
+            crate::render_ui::UiScoringSource::SonoOverlay
+        );
+        let level = crate::formats::load_level(&config.level).unwrap();
+        let forecast = crate::sono_overlay_scoring::simulate(
+            &level,
+            &crate::sono_overlay_scoring::ForecastConfig::default(),
+        )
+        .unwrap();
+        let first_note = forecast
+            .events
+            .iter()
+            .find(|event| !event.skill_activation)
+            .unwrap();
+        let first_note_state = forecast.state_at(first_note.time).unwrap();
+        assert!(first_note_state.score > 0.0);
+        assert!(first_note_state.combo > 0);
+        assert_eq!(first_note_state.judgment.as_deref(), Some("PERFECT"));
 
         let report = export_config_with_tools_controlled(
             &config,
@@ -2336,6 +2360,7 @@ mod tests {
                         music: &music,
                         mv: Some(&mv),
                         mv_background: percent,
+                        apply_engine_background_rotation: false,
                         resource_overrides: &crate::render::ResourceOverrides::default(),
                         output: &output,
                         start_time: start,
@@ -2859,6 +2884,7 @@ mod tests {
                 music: &music,
                 mv: None,
                 mv_background: 100.0,
+                apply_engine_background_rotation: false,
                 resource_overrides: &crate::render::ResourceOverrides::default(),
                 output: &short_239_output,
                 start_time: 0.0,
@@ -2915,6 +2941,7 @@ mod tests {
                     music: &music,
                     mv: Some(&mv),
                     mv_background: 40.0,
+                    apply_engine_background_rotation: false,
                     resource_overrides: &Default::default(),
                     output: &output,
                     start_time: 0.0,
@@ -2976,6 +3003,7 @@ mod tests {
                 music: &music,
                 mv: None,
                 mv_background: 100.0,
+                apply_engine_background_rotation: false,
                 resource_overrides: &crate::render::ResourceOverrides::default(),
                 output: &output,
                 start_time: 0.0,

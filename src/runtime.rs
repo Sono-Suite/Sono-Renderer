@@ -1537,6 +1537,99 @@ fn identity_skin_transform() -> [f64; 16] {
     std::array::from_fn(|index| if index % 5 == 0 { 1.0 } else { 0.0 })
 }
 
+/// Transfer the affine transform emitted for Sonolus' Runtime Background
+/// quad to another background quad, such as selected MV footage. Corners use
+/// Sonolus BL, TL, TR, BR order. This reads the transform from Watch output;
+/// it does not infer camera behavior from chart data.
+pub fn transfer_runtime_background_transform(
+    reference: [[f64; 2]; 4],
+    transformed: [[f64; 2]; 4],
+    target: [[f64; 2]; 4],
+) -> Result<[[f64; 2]; 4]> {
+    if !reference
+        .iter()
+        .chain(transformed.iter())
+        .chain(target.iter())
+        .flatten()
+        .all(|value| value.is_finite())
+    {
+        bail!("background transform contains a non-finite coordinate");
+    }
+
+    fn is_affine_quad(quad: [[f64; 2]; 4]) -> bool {
+        let expected = [
+            quad[1][0] + quad[3][0] - quad[0][0],
+            quad[1][1] + quad[3][1] - quad[0][1],
+        ];
+        let scale = quad
+            .iter()
+            .flatten()
+            .map(|value| value.abs())
+            .fold(1.0_f64, f64::max);
+        (expected[0] - quad[2][0]).abs() <= scale * 1e-8
+            && (expected[1] - quad[2][1]).abs() <= scale * 1e-8
+    }
+
+    if !is_affine_quad(reference) || !is_affine_quad(transformed) {
+        bail!("Runtime Background transform is not an affine quad");
+    }
+
+    let reference_x = [
+        reference[3][0] - reference[0][0],
+        reference[3][1] - reference[0][1],
+    ];
+    let reference_y = [
+        reference[1][0] - reference[0][0],
+        reference[1][1] - reference[0][1],
+    ];
+    let determinant = reference_x[0] * reference_y[1] - reference_x[1] * reference_y[0];
+    if !determinant.is_finite() || determinant.abs() <= 1e-12 {
+        bail!("initial Runtime Background quad is degenerate");
+    }
+
+    let transformed_x = [
+        transformed[3][0] - transformed[0][0],
+        transformed[3][1] - transformed[0][1],
+    ];
+    let transformed_y = [
+        transformed[1][0] - transformed[0][0],
+        transformed[1][1] - transformed[0][1],
+    ];
+
+    // The option transfers engine-driven background rotation. Some engines
+    // update the Runtime Background quad for non-rotational layout purposes
+    // (for example, a uniform cover-scale adjustment). Those updates must not
+    // change a custom MV merely because rotation-following is enabled. Extract
+    // the 2D affine transform's rotational component relative to the original
+    // quad and leave the target untouched when that component is identity.
+    let a00 = (transformed_x[0] * reference_y[1] - transformed_y[0] * reference_x[1]) / determinant;
+    let a01 =
+        (-transformed_x[0] * reference_y[0] + transformed_y[0] * reference_x[0]) / determinant;
+    let a10 = (transformed_x[1] * reference_y[1] - transformed_y[1] * reference_x[1]) / determinant;
+    let a11 =
+        (-transformed_x[1] * reference_y[0] + transformed_y[1] * reference_x[0]) / determinant;
+    let rotation_sine = a10 - a01;
+    let rotation_cosine = a00 + a11;
+    if rotation_sine.hypot(rotation_cosine) > 1e-12
+        && rotation_sine.atan2(rotation_cosine).abs() <= 1e-8
+    {
+        return Ok(target);
+    }
+
+    Ok(std::array::from_fn(|index| {
+        let offset = [
+            target[index][0] - reference[0][0],
+            target[index][1] - reference[0][1],
+        ];
+        let u = (offset[0] * reference_y[1] - offset[1] * reference_y[0]) / determinant;
+        let v = (reference_x[0] * offset[1] - reference_x[1] * offset[0]) / determinant;
+        [
+            transformed[0][0] + u * transformed_x[0] + v * transformed_y[0],
+            transformed[0][1] + u * transformed_x[1] + v * transformed_y[1],
+        ]
+    }))
+}
+
 fn transform_runtime_skin_corners(draw: &SpriteDraw, matrix: &[f64; 16]) -> [[f64; 2]; 4] {
     // Watch Draw corners are 2D screen positions; the Z tuple remains the
     // painter-order input. Apply the first two rows of Runtime Skin Transform
@@ -5169,6 +5262,47 @@ fn index_of(value: f64) -> Result<usize> {
         bail!("memory index must be a finite non-negative integer, got {value}");
     }
     Ok(value as usize)
+}
+
+#[cfg(test)]
+mod background_transform_tests {
+    use super::transfer_runtime_background_transform;
+
+    #[test]
+    fn transfers_watch_rotation_and_pivot_to_a_different_background_quad() {
+        let reference = [[-2.0, -1.0], [-2.0, 1.0], [2.0, 1.0], [2.0, -1.0]];
+        let transformed = reference.map(|[x, y]| [1.0 - (y + 2.0), -2.0 + (x - 1.0)]);
+        let mv = [[0.0, 0.0], [0.0, 2.0], [4.0, 2.0], [4.0, 0.0]];
+
+        assert_eq!(
+            transfer_runtime_background_transform(reference, transformed, mv).unwrap(),
+            [[-1.0, -3.0], [-3.0, -3.0], [-3.0, 1.0], [-1.0, 1.0]],
+        );
+        assert_eq!(
+            transfer_runtime_background_transform(reference, reference, mv).unwrap(),
+            mv,
+        );
+    }
+
+    #[test]
+    fn rejects_non_affine_runtime_background_geometry() {
+        let reference = [[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]];
+        let mut perspective = reference;
+        perspective[2][0] += 0.1;
+        assert!(transfer_runtime_background_transform(reference, perspective, reference).is_err());
+    }
+
+    #[test]
+    fn ignores_nonrotational_background_quad_updates_for_rotation_following() {
+        let reference = [[-2.0, -1.0], [-2.0, 1.0], [2.0, 1.0], [2.0, -1.0]];
+        let transformed = reference.map(|[x, y]| [x * 1.2 + 0.3, y * 1.2 - 0.4]);
+        let target = [[0.0, 0.0], [0.0, 2.0], [4.0, 2.0], [4.0, 0.0]];
+
+        assert_eq!(
+            transfer_runtime_background_transform(reference, transformed, target).unwrap(),
+            target,
+        );
+    }
 }
 
 #[cfg(test)]

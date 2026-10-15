@@ -54,6 +54,10 @@ pub struct RenderConfig {
     /// Sono-Renderer presentation brightness; does not change media timing.
     #[serde(default = "default_mv_background")]
     pub mv_background: f64,
+    /// Apply the Watch-produced Runtime Background transform to custom MV
+    /// footage. Native Sonolus backgrounds already consume this quad.
+    #[serde(default)]
+    pub apply_engine_background_rotation: bool,
     #[serde(default)]
     pub resource_overrides: ResourceOverrides,
     #[serde(default)]
@@ -82,7 +86,6 @@ pub struct RenderConfig {
     pub trace_entity_id: Option<usize>,
     #[serde(default)]
     pub layers: RenderLayers,
-    #[serde(default)]
     pub ui: RendererUiConfig,
     /// Renderer-owned watermark configuration/profile. The master switch
     /// controls both fixed attribution and the subordinate moving mark.
@@ -549,6 +552,7 @@ impl RenderConfig {
             &config.resource_overrides,
             config.watermark.clone(),
         )?;
+        session.set_apply_engine_background_rotation(config.apply_engine_background_rotation);
         session.set_execution_mode_with_compile_policy(
             config.execution_mode,
             config.compile_sono_gcc_on_demand,
@@ -923,6 +927,7 @@ impl Default for RenderConfig {
             mv: None,
             mv_enabled: default_mv_enabled(),
             mv_background: default_mv_background(),
+            apply_engine_background_rotation: false,
             resource_overrides: ResourceOverrides::default(),
             output: None,
             start_time: 0.0,
@@ -967,15 +972,18 @@ mod tests {
                 .unwrap();
         assert_eq!(config.mv_background, 100.0);
         assert!(config.mv_enabled);
+        assert!(!config.apply_engine_background_rotation);
         assert!(config.watermark.enabled);
         assert!(!config.watermark.moving.enabled);
         config.mv_enabled = false;
+        config.apply_engine_background_rotation = true;
         for percent in [0.0, 40.0, 100.0] {
             config.mv_background = percent;
             config.validate().unwrap();
             let copy: RenderConfig =
                 serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
             assert_eq!(copy.mv_background, percent);
+            assert!(copy.apply_engine_background_rotation);
             assert!(!copy.mv_enabled);
         }
         for percent in [-0.01, 100.01, f64::NAN, f64::INFINITY] {
@@ -1474,6 +1482,9 @@ mod tests {
 
         let mut ui = RendererUiConfig::reference_default();
         ui.enabled = true;
+        // The ordinary/minimal configuration has no scoring block. It must
+        // still produce the automatic forecast at the shared render boundary.
+        ui.scoring = None;
         let config: RenderConfig = serde_json::from_value(serde_json::json!({
             "engine": repo.join("TestingSuite/Next Sekai Engine/engine/Next Sekai Engine.zip"),
             "resources": repo.join("TestingSuite/Next Sekai Engine/skin/ProSeka Faithful 0.8.3.scp"),
@@ -1492,7 +1503,12 @@ mod tests {
         let frames = config.render_frames(&[before_time, after_time]).unwrap();
         let before = frames[0].ui_state.gameplay.as_ref().unwrap();
         let after = frames[1].ui_state.gameplay.as_ref().unwrap();
-        assert_eq!(frames[1].ui_state.scoring_status.as_deref().is_some(), true);
+        assert!(frames[1]
+            .ui_state
+            .scoring_status
+            .as_deref()
+            .unwrap()
+            .starts_with("Gameplay values: Auto-generated All Perfect"));
         assert!(after.score > before.score);
         assert!(after.combo > before.combo);
         assert_eq!(after.variables["effective_level_rating"], 0.0);
@@ -1693,6 +1709,7 @@ mod tests {
                     prefix: String::new(),
                     suffix: String::new(),
                     digits: 0,
+                    max_digits: None,
                     color: [255; 4],
                     font_size: 44.0,
                     font: Some(font.into()),

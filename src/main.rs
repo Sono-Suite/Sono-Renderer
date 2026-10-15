@@ -643,6 +643,9 @@ enum Command {
         /// MV presentation brightness, independent of the media timeline.
         #[arg(long, default_value_t = 100.0, value_parser = parse_mv_background)]
         mv_background: f64,
+        /// Apply the Watch-produced Runtime Background transform to custom MV footage.
+        #[arg(long)]
+        apply_engine_background_rotation: bool,
         /// Optional separate SCP particle resource collection.
         #[arg(long)]
         particle_resources: Option<PathBuf>,
@@ -2594,6 +2597,7 @@ fn run_cli(cli: Cli) -> Result<()> {
             custom_mv,
             no_mv,
             mv_background,
+            apply_engine_background_rotation,
             particle_resources,
             particle_name,
             start_time,
@@ -2680,6 +2684,7 @@ fn run_cli(cli: Cli) -> Result<()> {
                 mv: custom_mv,
                 mv_enabled: !no_mv,
                 mv_background,
+                apply_engine_background_rotation,
                 resource_overrides: renderer::render::ResourceOverrides {
                     particles: particle_resources,
                     particle_name,
@@ -5646,6 +5651,37 @@ mod desktop_cli_tests {
             ])
             .is_err());
         }
+    }
+
+    #[test]
+    fn engine_background_rotation_cli_flag_is_opt_in() {
+        let args = [
+            "renderer",
+            "render-video",
+            "engine.zip",
+            "resources.scp",
+            "level.json",
+            "music.mp3",
+            "out.mp4",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(args).unwrap().command,
+            Command::RenderVideo {
+                apply_engine_background_rotation: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(
+                [args.as_slice(), &["--apply-engine-background-rotation"]].concat()
+            )
+            .unwrap()
+            .command,
+            Command::RenderVideo {
+                apply_engine_background_rotation: true,
+                ..
+            }
+        ));
     }
 }
 
