@@ -914,6 +914,10 @@ fn apply_reference_glyph_import_report(
         ("life.glyphs", "life-shadow"),
         ("combo.glyph-family.p", "combo"),
         ("combo.glyph-family.b", "combo-burst"),
+        // The reference object also selects `n0..n9` when AP Combo is off.
+        // Keep that source-verified alternate family editable in an imported
+        // profile without changing the AP layout's active `p`/`b` layers.
+        ("combo.glyph-family.n", "combo.glyph-family.n"),
     ] {
         let Some(font) = config.fonts.get(font_name) else {
             continue;
@@ -2273,8 +2277,16 @@ impl RendererUiConfig {
                 }
             }
         }
+        let non_ap_combo_font = config.fonts.get("combo.glyph-family.n").cloned();
         if config.has_complete_reference_asset_set() {
             config.use_reference_hud(true);
+            if let Some(mut font) = non_ap_combo_font {
+                // Sono-Overlay lays out the `n` digits in the same fixed
+                // character slots as the AP foreground and burst layers.
+                font.center_spacing = Some(108.0);
+                font.glyph_max_dimension = Some(256);
+                config.fonts.insert("combo.glyph-family.n".into(), font);
+            }
             config.profile_name = format!("{} — Sono-Overlay reference HUD", pack.name);
             apply_reference_glyph_import_report(&mut report, &config, &pack);
         }
@@ -8428,10 +8440,95 @@ mod tests {
         assert!(report.loaded_assets.iter().any(|id| id == "judge.1"));
         assert_eq!(imported.fonts["score"].glyph_assets["0"], "score-digit-0");
         assert_eq!(imported.fonts["life"].glyph_assets["0"], "life-digit-0");
+        let mut builtin = RendererUiConfig::reference_default();
+        builtin.load_external_data().unwrap();
+        assert_eq!(
+            imported.elements, builtin.elements,
+            "importing the supplied Sono-Overlay pack and using the built-in default must resolve the same HUD geometry, layers, visibility rules, and animation definitions"
+        );
+        assert_eq!(imported.fonts["combo"].center_spacing, Some(108.0));
+        assert_eq!(builtin.fonts["combo"].center_spacing, Some(108.0));
+        assert_eq!(imported.fonts["combo-burst"].center_spacing, Some(108.0));
+        assert_eq!(builtin.fonts["combo-burst"].center_spacing, Some(108.0));
+        assert_eq!(imported.scoring, builtin.scoring);
+        for (font_name, pack_family, asset_prefix) in [
+            ("combo", "combo.glyph-family.p", "combo.p"),
+            ("combo-burst", "combo.glyph-family.b", "combo.b"),
+        ] {
+            for digit in '0'..='9' {
+                let character = digit.to_string();
+                let alias = format!(
+                    "{}-{digit}",
+                    if font_name == "combo" {
+                        "combo-digit"
+                    } else {
+                        "combo-burst"
+                    }
+                );
+                let pack_id = format!("{asset_prefix}{digit}");
+                assert_eq!(imported.fonts[font_name].glyph_assets[&character], alias);
+                assert_eq!(builtin.fonts[font_name].glyph_assets[&character], alias);
+                assert!(report.glyph_families[pack_family]
+                    .mapped_characters
+                    .contains(&character));
+                assert_eq!(
+                    imported.assets[&alias],
+                    PathBuf::from(format!("pack://{pack_id}")),
+                    "imported {font_name} digit {digit} must resolve to its source family"
+                );
+                assert_eq!(
+                    imported.loaded_assets[&alias].rgba,
+                    builtin.loaded_assets[&alias].rgba,
+                    "the imported and built-in profiles must rasterize the same {font_name} digit {digit}"
+                );
+            }
+        }
+        let normal_combo = &imported.fonts["combo.glyph-family.n"];
+        assert_eq!(normal_combo.center_spacing, Some(108.0));
+        for digit in '0'..='9' {
+            let character = digit.to_string();
+            let id = format!("combo.n{digit}");
+            assert_eq!(normal_combo.glyph_assets[&character], id);
+            assert_eq!(imported.assets[&id], PathBuf::from(format!("pack://{id}")));
+        }
+        assert_eq!(
+            report.glyph_families["combo.glyph-family.n"]
+                .mapped_characters
+                .len(),
+            10
+        );
+        assert!(!report
+            .unconfigured_element_families
+            .contains(&"combo.glyph-family.n".into()));
+        assert_eq!(report.unresolved_glyph_assets.len(), 56);
+        assert!(report
+            .unresolved_glyph_assets
+            .iter()
+            .any(|asset| asset == "combo.n_%"));
+        assert!(imported.elements.iter().any(|element| {
+            element.id == "combo-value"
+                && matches!(
+                    &element.kind,
+                    UiElementKind::Counter {
+                        font: Some(font),
+                        ..
+                    } if font == "combo"
+                )
+        }));
+        assert!(!imported.elements.iter().any(|element| {
+            matches!(
+                &element.kind,
+                UiElementKind::Counter {
+                    font: Some(font),
+                    ..
+                } if font == "combo.glyph-family.n"
+            )
+        }));
         for (family, font_name) in [
             ("score.glyphs", "score"),
             ("life.glyphs", "life"),
             ("combo.glyph-family.p", "combo"),
+            ("combo.glyph-family.n", "combo.glyph-family.n"),
         ] {
             let mapped = &report.glyph_families[family].mapped_characters;
             for digit in '0'..='9' {
@@ -8539,6 +8636,11 @@ mod tests {
         let reloaded = RendererUiConfig::load_profile(&profile_path).unwrap();
         assert_eq!(reloaded.scoring, imported.scoring);
         assert_eq!(reloaded.fonts["score"].glyph_assets["0"], "score-digit-0");
+        assert_eq!(
+            reloaded.fonts["combo.glyph-family.n"].glyph_assets["9"],
+            "combo.n9"
+        );
+        assert_eq!(reloaded.fonts["combo"].glyph_assets["8"], "combo-digit-8");
         assert_eq!(reloaded.elements, imported.elements);
         assert_eq!(reloaded.asset_root, imported.asset_root);
 

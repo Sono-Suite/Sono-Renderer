@@ -263,7 +263,13 @@ mod render_argument_tests {
             no_bgm: false,
         };
         let ui = args.ui_config().unwrap();
-        assert!(!ui.enabled || ui.secondary_metric.enabled);
+        assert!(ui.enabled);
+        assert_eq!(ui.profile_name, "Asset-backed Gameplay HUD");
+        assert_eq!(ui.fonts["combo"].center_spacing, Some(108.0));
+        assert!(ui
+            .elements
+            .iter()
+            .any(|element| element.id == "combo-event-pop"));
         assert!(ui.secondary_metric.enabled);
         assert!(!ui.primary_metric.enabled);
         assert!(!ui.progress);
@@ -277,12 +283,37 @@ mod render_argument_tests {
         let layers = args.layers();
         assert!(!layers.particles && !layers.sfx && layers.bgm);
     }
+
+    #[test]
+    fn direct_cli_hud_uses_reference_default_and_no_ui_remains_explicit() {
+        let defaults = RenderLayerArgs::default().ui_config().unwrap();
+        assert!(defaults.enabled);
+        assert_eq!(defaults.profile_name, "Asset-backed Gameplay HUD");
+        assert_eq!(defaults.fonts["combo"].center_spacing, Some(108.0));
+        assert_eq!(defaults.fonts["combo-burst"].center_spacing, Some(108.0));
+        assert!(defaults
+            .elements
+            .iter()
+            .any(|element| element.id == "combo-event-pulse"));
+
+        let disabled = RenderLayerArgs {
+            no_ui: true,
+            ..RenderLayerArgs::default()
+        }
+        .ui_config()
+        .unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.mode, renderer::render_ui::GameplayUiMode::Off);
+    }
 }
 
 impl RenderLayerArgs {
     fn ui_config(&self) -> Result<renderer::render_ui::RendererUiConfig> {
-        use renderer::render_ui::RendererUiConfig;
-        let mut ui = RendererUiConfig::default();
+        // Direct gameplay renders use the same reference HUD as RenderConfig
+        // and the GUI unless the caller explicitly disables it or supplies a
+        // profile. Starting from the empty RendererUiConfig made the normal
+        // render-video path silently omit the production HUD.
+        let mut ui = renderer::render_ui::RendererUiConfig::reference_default();
         self.apply_ui_overrides(&mut ui)?;
         ui.validate()?;
         Ok(ui)

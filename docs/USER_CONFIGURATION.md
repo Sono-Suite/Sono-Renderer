@@ -88,6 +88,18 @@ renderer render-video engine.zip skin.scp level.json.gz music.mp3 output.mp4 --n
 `watermark.enabled` master switch has the same meaning. The exact fixed
 attribution rendered is &#x203B;Made with&#x300C;Sono-Renderer&#x300D;by Nexint.
 
+Direct `render-video` exports start with the bundled `Asset-backed Gameplay
+HUD` profile, matching a fresh GUI `RenderConfig` and `render-config` created
+from `default-config`. `--ui-profile` selects an explicit HUD profile and
+`--no-ui` disables the HUD. `render-config <file>` uses the UI stored in that
+file; `render-config --profile <name>` uses the selected saved configuration
+profile.
+
+The GUI restores an explicitly active saved configuration profile on startup.
+That profile intentionally takes precedence over renderer defaults and remains
+unchanged by this default-HUD update. Run `renderer profile deselect` to return
+the next GUI session to the current renderer defaults.
+
 ## Preserved CLI and GUI surface
 
 The existing CLI subcommands remain present: `ffmpeg-info`, `validate-project`,

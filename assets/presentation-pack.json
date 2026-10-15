@@ -3,7 +3,7 @@
     "schema_version":  1,
     "id":  "sono-reference",
     "name":  "Sono-Renderer supplied presentation reference",
-    "description":  "Reference visual asset collection. Glyph prefix families whose meaning is not established by visible content are classified structurally and remain semantically unassigned.",
+    "description":  "Reference visual asset collection. Glyph prefix families are classified structurally; only character mappings verified by the Sono-Overlay source are assigned, while alternate variants remain unassigned.",
     "assets":  [
                    {
                        "id":  "ap",
@@ -529,8 +529,9 @@
                        "source":  "combo/n0.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "0",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -538,8 +539,9 @@
                        "source":  "combo/n1.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "1",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -547,8 +549,9 @@
                        "source":  "combo/n2.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "2",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -556,8 +559,9 @@
                        "source":  "combo/n3.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "3",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -565,8 +569,9 @@
                        "source":  "combo/n4.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "4",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -574,8 +579,9 @@
                        "source":  "combo/n5.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "5",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -583,8 +589,9 @@
                        "source":  "combo/n6.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "6",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -592,8 +599,9 @@
                        "source":  "combo/n7.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "7",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -601,8 +609,9 @@
                        "source":  "combo/n8.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "8",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {
@@ -610,8 +619,9 @@
                        "source":  "combo/n9.png",
                        "kind":  "glyph",
                        "family":  "combo.glyph-family.n",
+                       "character":  "9",
                        "tags":  [
-                                    "family-prefix:n semantics:unverified"
+                                    "family-prefix:n semantics:non-ap-combo-digit"
                                 ]
                    },
                    {

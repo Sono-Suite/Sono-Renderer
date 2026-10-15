@@ -18846,6 +18846,27 @@ mod tests {
         assert_eq!(app.config.backend, RenderBackend::Wgpu);
         assert_eq!(app.config.layers, crate::render::RenderLayers::default());
         assert!(!app.config.compile_sono_gcc_on_demand);
+        assert!(app.active_profile_id.is_none());
+        assert_eq!(app.config.ui.profile_name, "Asset-backed Gameplay HUD");
+        assert_eq!(app.config.ui.fonts["combo"].center_spacing, Some(108.0));
+        assert_eq!(
+            app.config.ui.fonts["combo-burst"].center_spacing,
+            Some(108.0)
+        );
+        assert!(app
+            .config
+            .ui
+            .elements
+            .iter()
+            .any(|element| element.id == "combo-event-pulse"));
+        assert!(app
+            .config
+            .ui
+            .elements
+            .iter()
+            .any(|element| element.id == "combo-event-pop"));
+        let export_config = Desktop::gui_export_config(&app.config);
+        assert_eq!(export_config.ui, app.config.ui);
     }
 
     #[test]

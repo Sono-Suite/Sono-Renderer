@@ -40,25 +40,29 @@ profile data.
 | Rank | `score.rank.chr.*`, `score.rank.txt.en.*` | Rank image and supplied English caption, selected from external presentation state |
 | Life panel/gauge | `life.bg`, `life.normal`, `life.danger`, `life.mask`, `life.overflow` | Panel, masked fill, threshold-based styles, and over-maximum fill |
 | Life glyphs | `life.digit.*` | Per-glyph image text for life digits |
-| Combo | `combo.pe`, `combo.pt`, `combo.p0..p9`, `combo.b0..b9` | Separate glow/title, colored number family, and burst layer |
+| Combo | `combo.pe`, `combo.pt`, `combo.p0..p9`, `combo.b0..b9`, `combo.n0..n9` | AP foreground, underlay/burst, and alternate non-AP number family |
 | Judgement | `judge.1..6` | Image styles for PERFECT, GREAT, GOOD, BAD, MISS, and AUTO |
 
 The following meanings are directly visible in the images or confirmed by
 the reference composition in `TestingSuite/Sono-Overlay`: score/life panel
 layers, the supplied rank captions and letters, the six judgement words,
-English/Japanese language variants, and the `p` combo digits used by the
-reference. The split life assets compose a live gauge; the flattened `life.png`
-and `life-v1.png` are fixed-value HUD snapshots and are not used where values
-must change.
+English/Japanese language variants, and the combo families. In the reference
+`@Combo` object, `p0..p9` are AP foreground digits, `b0..b9` are AP underlay
+and burst digits, and `n0..n9` are normal (non-AP) foreground digits. Imported
+profiles keep the `n` digits available as an alternate bitmap font; the
+supplied AP layout continues to render `p` over `b`. The split life assets
+compose a live gauge; the flattened `life.png` and `life-v1.png` are
+fixed-value HUD snapshots and are not used where values must change.
 
 ## Preserved classifications and uncertainty
 
 The `combo.n*`, `combo.p*`, and `combo.b*` families are separate selectable
-glyph families. Their visible appearance and naming relationships are
-recorded, but the prefixes are not treated as universal semantics. The default
-template selects the `p` digits and uses `b` as the burst layer because that
-matches the inspected reference composition. The `n` family and alternate
-punctuation/underscore variants remain in the pack.
+glyph families. The reference-source roles above are recorded only for the
+verified numeric IDs. The default template selects the `p` digits and uses
+`b` for the underlay and burst layers, matching the inspected AP composition.
+The `n` digits are mapped for editing non-AP layouts; alternate
+punctuation/underscore variants remain available in the pack and are not
+guessed into character mappings.
 
 `score/digit/%`, `.`, `-`, and their shadow variants are preserved. The
 reference profile maps the signs it currently renders; it does not invent
@@ -114,11 +118,12 @@ The importer registers supported image, sprite, and glyph IDs using
 version-1 Gameplay UI profile. Video and other non-image entries remain
 catalogued as unsupported by the in-game HUD compositor. Glyph family names
 and exact one-character mappings are retained. Duplicate characters are
-reported as ambiguous and are not chosen automatically. Unlabeled glyphs,
-including the supplied `combo.glyph-family.*` families, remain unassigned;
+reported as ambiguous and are not chosen automatically. Unlabeled glyph
+variants remain unassigned; the source-verified `combo.n0..n9` digits are
+mapped as an alternate non-AP counter font.
 expand a family and explicitly select an image for digits 0–9 to build its
-bitmap font. This preserves visual variants without guessing what `n`, `p`, or
-`b` means.
+bitmap font. This preserves visual variants without assigning characters to
+unlabeled alternatives.
 
 The profile editor provides **Add Score Counter**, **Add Combo Counter**,
 **Add Life Counter**, and **Add Image Element**. Select an element to edit its

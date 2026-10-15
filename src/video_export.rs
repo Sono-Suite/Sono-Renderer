@@ -2076,6 +2076,7 @@ fn parse_rational(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     #[ignore = "real FFmpeg export integration: run explicitly for the current Windows toolchain"]
@@ -2096,9 +2097,9 @@ mod tests {
         )));
         config.start_time = 0.0;
         config.duration = 4.0;
-        config.fps = 24;
-        config.width = 640;
-        config.height = 360;
+        config.fps = 60;
+        config.width = 1920;
+        config.height = 1080;
         config.level_options = vec![
             crate::render::LevelOptionValue {
                 index: 1,
@@ -2113,7 +2114,32 @@ mod tests {
         config.layers.sfx = false;
         config.layers.bgm = false;
         config.backend = crate::render::RenderBackend::Cpu;
-        config.ui = crate::render_ui::RendererUiConfig::reference_default();
+        let (imported_ui, import_report) = crate::render_ui::RendererUiConfig::import_asset_pack(
+            repository.join("assets/presentation-pack.json"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            imported_ui.profile_name,
+            "Sono-Renderer supplied presentation reference — Sono-Overlay reference HUD"
+        );
+        assert_eq!(
+            imported_ui.assets[&imported_ui.fonts["combo"].glyph_assets["8"]],
+            PathBuf::from("pack://combo.p8")
+        );
+        assert_eq!(
+            imported_ui.assets[&imported_ui.fonts["combo-burst"].glyph_assets["8"]],
+            PathBuf::from("pack://combo.b8")
+        );
+        assert_eq!(
+            imported_ui.fonts["combo.glyph-family.n"].glyph_assets["8"],
+            "combo.n8"
+        );
+        assert!(import_report
+            .unconfigured_element_families
+            .iter()
+            .all(|family| family != "combo.glyph-family.n"));
+        config.ui = imported_ui;
         config.ui.enabled = true;
         // Exercise the user-facing default: no scoring block and no manual
         // event file. The shared render session must prepare All Perfect data.
@@ -2145,11 +2171,11 @@ mod tests {
             crate::export_control::ExportControl::default(),
         )
         .unwrap();
-        assert_eq!(report.submitted_frames, 96);
+        assert_eq!(report.submitted_frames, 240);
         assert!(config.output.as_ref().unwrap().metadata().unwrap().len() > 0);
         assert_eq!(report.probe["streams"][0]["codec_name"], "h264");
-        assert_eq!(report.probe["streams"][0]["width"], 640);
-        assert_eq!(report.probe["streams"][0]["height"], 360);
+        assert_eq!(report.probe["streams"][0]["width"], 1920);
+        assert_eq!(report.probe["streams"][0]["height"], 1080);
         assert!(report
             .watch_execution_status
             .contains("Sono VM / interpreter selected"));
