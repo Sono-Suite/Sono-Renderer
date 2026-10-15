@@ -1,5 +1,11 @@
 # Particle compatibility handoff
 
+> Archival note (2026-10-15): paths below into `TestingSuite/Sonolus Inspection/`
+> identify optional historical evidence. Restore the inspection archive to read
+> it; neither that tree, `TestingSuite/android-sdk-live/`, nor root `sono-apk/`
+> is required by the renderer or current tests. See [the archival dependency
+> audit](ARCHIVAL_DEPENDENCY_AUDIT.md). Historical conclusions below are preserved.
+
 > Superseded on 2026-10-05 by [the comprehensive particle audit](PARTICLE_FORENSIC_AUDIT.md).
 > New ELF-aware disassembly and caller dataflow establish that the old size conclusion below was incorrect. The new audit documents generic size, easing, and entry-timing fixes. Earlier scope restrictions below are historical; the user subsequently authorized the comprehensive investigation and selected the saved Horizon/Dreamer recording.
 

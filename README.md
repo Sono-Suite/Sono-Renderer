@@ -344,6 +344,12 @@ subcommand's `--help` output. CLI examples assume the executable is available
 as `renderer`; on Windows, use `target\release\renderer.exe` or run commands
 through `cargo run --release --`.
 
+The retired Android/APK inspection environment is optional archival material;
+it is not needed to build or run Sono-Renderer. See
+[reference provenance and archival scope](REFERENCE_SOURCES.md) and the
+[dependency audit](docs/ARCHIVAL_DEPENDENCY_AUDIT.md) for test-fixture boundaries
+and validation results.
+
 legal jargan lol:
 
 I do not claim to have written any of the code in this project, as I do not personally know the programming language Rust. This project is AI assisted "to the absolute extreme", and if you don't like that, it's fine. However, please make the distinction that I am not going to turn my YouTube content flow and actual creative works into AI slop machine. AI content slop is not something that I endorse in any way, shape or form. Please understand my intention with this project is not to claim that I wrote the code in this project, but to provide a tool that helps automate the chart production process much much quicker.

@@ -313,6 +313,10 @@ fn main() -> Result<()> {
             advance: 1.0,
             glyph_map: BTreeMap::new(),
             glyph_assets: BTreeMap::new(),
+            glyph_scales: BTreeMap::new(),
+            glyph_advances: BTreeMap::new(),
+            center_spacing: None,
+            glyph_max_dimension: None,
         },
     );
     minimal.elements.push(UiElement {

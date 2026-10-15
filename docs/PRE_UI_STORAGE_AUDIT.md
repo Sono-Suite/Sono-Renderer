@@ -2,6 +2,12 @@
 
 Date: 2026-10-05
 
+> Historical storage snapshot. On 2026-10-15, `TestingSuite/android-sdk-live/`,
+> `TestingSuite/Sonolus Inspection/`, and repository-root `sono-apk/` were
+> designated optional archival material. Sizes and retention decisions below
+> describe the earlier checkpoint, not current runtime requirements. See
+> [the archival dependency audit](ARCHIVAL_DEPENDENCY_AUDIT.md).
+
 ## Checkpoint
 
 - Branch: `main`.
