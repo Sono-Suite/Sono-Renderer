@@ -2159,10 +2159,23 @@ mod tests {
             .iter()
             .find(|event| !event.skill_activation)
             .unwrap();
-        let first_note_state = forecast.state_at(first_note.time).unwrap();
+        // The forecast intentionally uses a strict event-time boundary; the
+        // event is visible on the first output sample after its timestamp.
+        let first_note_state = forecast.state_at(first_note.time + 1.0 / 60.0).unwrap();
         assert!(first_note_state.score > 0.0);
         assert!(first_note_state.combo > 0);
         assert_eq!(first_note_state.judgment.as_deref(), Some("PERFECT"));
+        let combo_46_event = forecast
+            .frames
+            .iter()
+            .find(|frame| frame.combo == 46 && frame.source_entity.is_some())
+            .expect("real Baumkuchen chart has an All Perfect combo-46 event");
+        let combo_46_time = combo_46_event.time;
+        // Export three consecutive late-pop frames where the Lua source
+        // enables both Glow and Light. The full age sequence is captured by
+        // the compositor test; this integration checks its real MP4 path.
+        config.start_time = combo_46_time + 9.0 / 60.0;
+        config.duration = 3.0 / 60.0;
 
         let report = export_config_with_tools_controlled(
             &config,
@@ -2171,7 +2184,7 @@ mod tests {
             crate::export_control::ExportControl::default(),
         )
         .unwrap();
-        assert_eq!(report.submitted_frames, 240);
+        assert_eq!(report.submitted_frames, 3);
         assert!(config.output.as_ref().unwrap().metadata().unwrap().len() > 0);
         assert_eq!(report.probe["streams"][0]["codec_name"], "h264");
         assert_eq!(report.probe["streams"][0]["width"], 1920);
@@ -2180,8 +2193,8 @@ mod tests {
             .watch_execution_status
             .contains("Sono VM / interpreter selected"));
         println!(
-            "Generated real gameplay-HUD MP4: {}",
-            config.output.as_ref().unwrap().display()
+            "Generated real gameplay-HUD MP4 around combo 46 at chart time {combo_46_time:.6}: {}",
+            config.output.as_ref().unwrap().display(),
         );
     }
 

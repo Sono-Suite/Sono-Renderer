@@ -49,7 +49,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     let manifest = repository.join("assets/presentation-pack.json");
     let (ui, report) = RendererUiConfig::import_asset_pack(&manifest, None).unwrap();
     assert!(report.loaded_assets.contains(&"judge.1".to_owned()));
-    assert_eq!(report.configured_elements, 28);
+    assert_eq!(report.configured_elements, 29);
     assert!(!report
         .unconfigured_element_families
         .contains(&"combo.glyph-family.n".to_owned()));
@@ -91,14 +91,14 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
             event: "fixture-hit".into(),
             payload: [
                 ("rank_code".into(), 2.0),
-                ("score_bonus".into(), 100.0),
+                ("score_bonus".into(), 46_823.0),
             ]
             .into_iter()
             .collect(),
             ..Default::default()
         },
         UiGameplayEvent {
-            time: 26.5,
+            time: 27.0,
             event: "fixture-miss".into(),
             ..Default::default()
         },
@@ -115,7 +115,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     // generated player judgments. They exercise the authoritative event
     // adapter through the actual Watch/render/compositor/export pipeline.
     config.start_time = 25.5;
-    config.duration = 1.5;
+    config.duration = 1.0 + 31.0 / 60.0;
     config.fps = 60;
     config.width = 1920;
     config.height = 1080;
@@ -128,8 +128,8 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     config.ui.events_file = Some(event_path.clone());
     let mut scoring = UiScoringConfig {
         // Values are external fixture state, not Watch outputs. The hit at
-        // 26s reaches the visible reference snapshot (601632 / combo 47).
-        initial_score: 601_532.0,
+        // 26s matches the source increment reference (655525 / +46823 / combo 47).
+        initial_score: 608_702.0,
         initial_combo: 46,
         initial_life: 1_000.0,
         maximum_life: 1_000.0,
@@ -137,7 +137,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     };
     scoring.rules.push(UiScoreRule {
         event: "fixture-hit".into(),
-        score: 100.0,
+        score: 46_823.0,
         combo: UiComboChange::Increment,
         life: -120.0,
         judgement: "PERFECT".into(),
@@ -159,7 +159,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
             state.life,
             state.judgment
         )),
-        Some((601_532.0, 46, 1_000.0, None))
+        Some((608_702.0, 46, 1_000.0, None))
     );
     assert_eq!(
         config.ui.gameplay_state_at(26.0).unwrap().map(|state| (
@@ -168,21 +168,31 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
             state.life,
             state.judgment
         )),
-        Some((601_632.0, 47, 880.0, Some("PERFECT".into())))
+        Some((655_525.0, 47, 880.0, Some("PERFECT".into())))
     );
     assert_eq!(
-        config.ui.gameplay_state_at(26.5).unwrap().map(|state| (
+        config
+            .ui
+            .gameplay_state_at(26.0)
+            .unwrap()
+            .unwrap()
+            .variables["score_bonus"],
+        46_823.0
+    );
+    assert_eq!(
+        config.ui.gameplay_state_at(27.0).unwrap().map(|state| (
             state.score,
             state.combo,
             state.life,
             state.judgment
         )),
-        Some((601_632.0, 0, 580.0, Some("MISS".into())))
+        Some((655_525.0, 0, 580.0, Some("MISS".into())))
     );
     config.save_config(&config_path).unwrap();
 
-    let executable = env!("CARGO_BIN_EXE_renderer");
-    let rendered = Command::new(executable)
+    let executable = std::env::var_os("SONO_ACCEPTANCE_RENDERER")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_renderer").into());
+    let rendered = Command::new(&executable)
         .arg("render-config")
         .arg(&config_path)
         .current_dir(repository)
@@ -261,7 +271,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     for (time, path) in [
         ("0", &before_path),
         ("0.75", &feedback_path),
-        ("1", &miss_path),
+        ("1.5", &miss_path),
     ] {
         let extracted = Command::new(&ffmpeg)
             .args(["-y", "-v", "error", "-ss", time, "-i"])
@@ -352,7 +362,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     );
     assert_eq!(default_config.ui.elements, config.ui.elements);
     default_config.save_config(&default_config_path).unwrap();
-    let default_rendered = Command::new(executable)
+    let default_rendered = Command::new(&executable)
         .arg("render-config")
         .arg(&default_config_path)
         .current_dir(repository)
@@ -426,7 +436,7 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
     for (time, imported_path) in [
         ("0", &before_path),
         ("0.75", &feedback_path),
-        ("1", &miss_path),
+        ("1.5", &miss_path),
     ] {
         let path = acceptance_dir.join(format!("fresh-default-{unique}-{time}.png"));
         let extracted = Command::new(&ffmpeg)
@@ -447,6 +457,44 @@ fn imported_asset_pack_art_reaches_a_real_gameplay_mp4() {
             imported, fresh,
             "fresh default and imported acceptance frames differ at output {time}s"
         );
+    }
+    let bonus_frames = [
+        ("age-00", "0.5"),
+        ("age-01", "0.516666667"),
+        ("age-12", "0.7"),
+        ("age-30", "1.0"),
+        ("age-31", "1.016666667"),
+    ];
+    for (age, time) in bonus_frames {
+        let imported_frame_path = acceptance_dir.join(format!("score-bonus-{age}-{unique}.png"));
+        let default_bonus_frame_path =
+            acceptance_dir.join(format!("score-bonus-default-{age}-{unique}.png"));
+        for (video, path) in [
+            (&output_path, &imported_frame_path),
+            (&default_output_path, &default_bonus_frame_path),
+        ] {
+            let extracted = Command::new(&ffmpeg)
+                .args(["-y", "-v", "error", "-ss", time, "-i"])
+                .arg(video)
+                .args(["-frames:v", "1", "-update", "1"])
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(
+                extracted.status.success(),
+                "score-bonus frame {age} extraction failed: {}",
+                String::from_utf8_lossy(&extracted.stderr)
+            );
+        }
+        let imported = image::open(&imported_frame_path).unwrap().to_rgb8();
+        let fresh = image::open(&default_bonus_frame_path).unwrap().to_rgb8();
+        assert_eq!(
+            imported, fresh,
+            "default and acceptance MP4 differ at {age}"
+        );
+        let crop = image::imageops::crop_imm(&imported, 350, 80, 280, 90).to_image();
+        crop.save(acceptance_dir.join(format!("score-bonus-crop-{age}-{unique}.png")))
+            .unwrap();
     }
     println!("DEFAULT MP4: {}", default_output_path.display());
     println!("DEFAULT FRAME: {}", default_frame_path.display());

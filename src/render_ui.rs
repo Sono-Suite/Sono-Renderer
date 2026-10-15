@@ -512,7 +512,8 @@ pub enum UiTextAlign {
 }
 
 /// Blend operation for a UI element's output. This currently keeps the
-/// normal alpha path and the additive path used by the Sono-Overlay combo pop.
+/// normal alpha path and an optional additive path. The reference AP combo
+/// explicitly selects normal blending inside its transient loop.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UiBlendMode {
@@ -537,6 +538,23 @@ pub struct UiStyleRule {
     pub opacity: Option<f64>,
 }
 
+/// Small, bounded raster effects used by profile-backed HUD layers. The
+/// strength expressions are evaluated from the same resolved frame state as
+/// transforms and opacity, so seeking and MP4 export use identical values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum UiRasterEffect {
+    Glow {
+        strength: UiExpression,
+        blur: f64,
+    },
+    Light {
+        strength: UiExpression,
+        #[serde(default)]
+        backlight: bool,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct UiElement {
@@ -549,7 +567,7 @@ pub struct UiElement {
     pub blend_mode: UiBlendMode,
     /// Elements sharing a group are rendered into one transparent surface
     /// before that surface is composited onto the frame. This preserves local
-    /// blend semantics such as Sono-Overlay's additive combo pop.
+    /// blend semantics without adding emission directly to the gameplay frame.
     #[serde(default)]
     pub isolation_group: Option<String>,
     pub layout: UiLayout,
@@ -560,6 +578,10 @@ pub struct UiElement {
     pub visible_when: Option<UiCondition>,
     pub animations: Vec<UiAnimation>,
     pub style_rules: Vec<UiStyleRule>,
+    /// Optional profile-authored pixel effects. Empty by default; normal HUD
+    /// elements stay on the direct raster path.
+    #[serde(default)]
+    pub raster_effects: Vec<UiRasterEffect>,
     #[serde(flatten)]
     pub kind: UiElementKind,
     pub children: Vec<UiElement>,
@@ -579,6 +601,7 @@ impl Default for UiElement {
             visible_when: None,
             animations: Vec::new(),
             style_rules: Vec::new(),
+            raster_effects: Vec::new(),
             kind: UiElementKind::Group,
             children: Vec::new(),
         }
@@ -809,6 +832,7 @@ impl UiGameplayState {
         let Some(rule) = rule else {
             return Ok(false);
         };
+        let previous_score = self.score;
         self.score += rule.score;
         self.combo = match rule.combo {
             UiComboChange::Preserve => self.combo,
@@ -822,6 +846,13 @@ impl UiGameplayState {
         self.judgment_time = self.judgment.as_ref().map(|_| event.time);
         self.event = Some(event.event.clone());
         self.note_type = event.note_type.clone();
+        let score_delta = self.score - previous_score;
+        self.variables.insert("score_delta".into(), score_delta);
+        let has_score_bonus_override =
+            rule.variables.contains_key("score_bonus") || event.payload.contains_key("score_bonus");
+        if !has_score_bonus_override {
+            self.variables.insert("score_bonus".into(), score_delta);
+        }
         for (name, value) in &rule.variables {
             *self.variables.entry(name.clone()).or_default() += value;
         }
@@ -3113,6 +3144,17 @@ fn validate_element(
             bail!("gameplay UI element {:?} has invalid flow gap", element.id);
         }
     }
+    for effect in &element.raster_effects {
+        match effect {
+            UiRasterEffect::Glow { strength, blur } => {
+                validate_expression(strength)?;
+                if !blur.is_finite() || *blur <= 0.0 || *blur > 64.0 {
+                    bail!("gameplay UI element {:?} has invalid glow blur", element.id);
+                }
+            }
+            UiRasterEffect::Light { strength, .. } => validate_expression(strength)?,
+        }
+    }
     match &element.kind {
         UiElementKind::Text {
             value,
@@ -3843,6 +3885,130 @@ fn collect_element_output_bounds(
     }
 }
 
+/// Response calibrated against DisplayHolic Blank.mp4, using combos 2/4 for
+/// fitting and 3/6 plus multiple-digit counters for validation. These constants
+/// describe pixels, not animation timing; the Lua strength curves stay intact.
+const UI_GLOW_SIGMA_PER_BLUR: f64 = 0.24;
+const UI_GLOW_GAIN: f64 = 0.04;
+const UI_BACKLIGHT_SIGMA: f64 = 14.6;
+const UI_BACKLIGHT_GAIN: f64 = 0.015;
+
+/// Retain emission above 255 until draw opacity and destination blending have
+/// been applied. Clipping the source first flattens the late-pop response.
+#[allow(clippy::too_many_arguments)]
+fn apply_ui_raster_effects(
+    rgb: &[u8],
+    alpha: &[u8],
+    width: u32,
+    height: u32,
+    effects: &[UiRasterEffect],
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+    source_pixel_scale: f64,
+) -> Result<(Vec<f64>, Vec<f64>)> {
+    let mut output_rgb: Vec<f64> = rgb.iter().map(|value| f64::from(*value)).collect();
+    let mut output_alpha: Vec<f64> = alpha.iter().map(|value| f64::from(*value)).collect();
+    for effect in effects {
+        match effect {
+            UiRasterEffect::Glow { strength, blur } => {
+                let strength = evaluate_expression(strength, config, state)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 100.0);
+                if strength <= 0.0 {
+                    continue;
+                }
+                let sigma = (blur * UI_GLOW_SIGMA_PER_BLUR * source_pixel_scale).clamp(0.25, 64.0);
+                let blurred = gaussian_blur_ui_alpha(&output_alpha, width, height, sigma)?;
+                let amount = strength * UI_GLOW_GAIN;
+                for (index, blurred_alpha) in blurred.into_iter().enumerate() {
+                    // Neutral emission fits the reference's default Glow;
+                    // see the calibration report for native-kernel limits.
+                    let emission = blurred_alpha * amount;
+                    for channel in 0..3 {
+                        output_rgb[index * 3 + channel] += emission;
+                    }
+                    output_alpha[index] = (output_alpha[index] + emission).min(255.0);
+                }
+            }
+            UiRasterEffect::Light {
+                strength,
+                backlight,
+            } => {
+                let strength = evaluate_expression(strength, config, state)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 100.0);
+                if strength <= 0.0 {
+                    continue;
+                }
+                if *backlight {
+                    let sigma = (UI_BACKLIGHT_SIGMA * source_pixel_scale).clamp(0.25, 64.0);
+                    let blurred = gaussian_blur_ui_alpha(&output_alpha, width, height, sigma)?;
+                    for (index, blurred_alpha) in blurred.into_iter().enumerate() {
+                        // Backlight is spatial illumination outside the matte,
+                        // not a permanent multiplier on the foreground PNG.
+                        let emission = (blurred_alpha - output_alpha[index]).max(0.0)
+                            * strength
+                            * UI_BACKLIGHT_GAIN;
+                        for channel in 0..3 {
+                            output_rgb[index * 3 + channel] += emission;
+                        }
+                        output_alpha[index] = (output_alpha[index] + emission).min(255.0);
+                    }
+                } else {
+                    for channel in &mut output_rgb {
+                        *channel *= 1.0 + strength / 100.0;
+                    }
+                }
+            }
+        }
+    }
+    Ok((output_rgb, output_alpha))
+}
+
+fn gaussian_blur_ui_alpha(alpha: &[f64], width: u32, height: u32, sigma: f64) -> Result<Vec<f64>> {
+    let pixel_count = width as usize * height as usize;
+    if width == 0 || height == 0 || alpha.len() != pixel_count {
+        bail!("gameplay UI raster effect received inconsistent image dimensions");
+    }
+    let radius = (sigma * 4.0).ceil().clamp(1.0, 256.0) as i32;
+    let mut kernel: Vec<f64> = (-radius..=radius)
+        .map(|offset| (-(f64::from(offset).powi(2)) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let total: f64 = kernel.iter().sum();
+    for weight in &mut kernel {
+        *weight /= total;
+    }
+    let mut horizontal = vec![0.0; pixel_count];
+    let mut output = vec![0.0; pixel_count];
+    let w = width as i32;
+    let h = height as i32;
+    for y in 0..h {
+        for x in 0..w {
+            let index = y as usize * width as usize + x as usize;
+            for (kernel_index, offset) in (-radius..=radius).enumerate() {
+                let sample_x = x + offset;
+                if (0..w).contains(&sample_x) {
+                    horizontal[index] += alpha[y as usize * width as usize + sample_x as usize]
+                        * kernel[kernel_index];
+                }
+            }
+        }
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let index = y as usize * width as usize + x as usize;
+            for (kernel_index, offset) in (-radius..=radius).enumerate() {
+                let sample_y = y + offset;
+                if (0..h).contains(&sample_y) {
+                    output[index] += horizontal[sample_y as usize * width as usize + x as usize]
+                        * kernel[kernel_index];
+                }
+            }
+        }
+    }
+    Ok(output)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct UiRect {
     x: f64,
@@ -4040,6 +4206,192 @@ fn responsive_group_matrix(
 
 #[allow(clippy::too_many_arguments)]
 fn render_element(
+    rgb: &mut [u8],
+    width: u32,
+    height: u32,
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+    element: &UiElement,
+    parent: UiRect,
+    parent_matrix: UiMatrix,
+    mut alpha_target: Option<&mut [u8]>,
+    depth: usize,
+) -> Result<()> {
+    if depth > 32
+        || !element.enabled
+        || element
+            .visible_when
+            .as_ref()
+            .is_some_and(|condition| !evaluate_condition(condition, config, state))
+    {
+        return Ok(());
+    }
+    if element.raster_effects.is_empty() {
+        return render_element_unfiltered(
+            rgb,
+            width,
+            height,
+            config,
+            state,
+            element,
+            parent,
+            parent_matrix,
+            alpha_target,
+            depth,
+        );
+    }
+
+    // Render effect-bearing layers into a small premultiplied surface. This
+    // keeps the Glow/Light pass local to the authored element and lets it run
+    // before the same Normal/Add blend operation used by the rest of the HUD.
+    let mut bounds = None;
+    collect_element_output_bounds(
+        element,
+        parent,
+        parent_matrix,
+        config,
+        state,
+        width,
+        height,
+        &mut bounds,
+        depth,
+    );
+    let Some((mut left, mut top, mut right, mut bottom)) = bounds else {
+        return Ok(());
+    };
+    let mut style_opacity = 1.0;
+    for style in &element.style_rules {
+        if evaluate_condition(&style.when, config, state) {
+            if let Some(value) = style.opacity {
+                style_opacity = value;
+            }
+        }
+    }
+    let (_, effect_world) =
+        element_geometry(element, parent, parent_matrix, config, state, style_opacity);
+    let layer_blend_mode = effect_world.blend_mode;
+    let draw_opacity = effect_world.opacity.clamp(0.0, 1.0);
+    let glyph_scale = match &element.kind {
+        UiElementKind::Counter {
+            font_size,
+            font: Some(font),
+            ..
+        }
+        | UiElementKind::Text {
+            font_size,
+            font: Some(font),
+            ..
+        } => config
+            .fonts
+            .get(font)
+            .map_or(1.0, |font| font_size / f64::from(font.glyph_height)),
+        _ => 1.0,
+    };
+    // Filters operate in source pixels before obj.draw's scale. Preserve the
+    // existing glyph geometry; only scale the filter's footprint with it.
+    let source_pixel_scale = glyph_scale
+        * (effect_world.a * effect_world.d - effect_world.b * effect_world.c)
+            .abs()
+            .sqrt();
+    let glow_padding = element
+        .raster_effects
+        .iter()
+        .filter_map(|effect| {
+            let (strength, sigma) = match effect {
+                UiRasterEffect::Glow { strength, blur } => {
+                    (strength, blur * UI_GLOW_SIGMA_PER_BLUR)
+                }
+                UiRasterEffect::Light {
+                    strength,
+                    backlight: true,
+                } => (strength, UI_BACKLIGHT_SIGMA),
+                _ => return None,
+            };
+            (evaluate_expression(strength, config, state).unwrap_or(0.0) > 0.0)
+                .then_some(((sigma * source_pixel_scale).clamp(0.25, 64.0) * 4.0).ceil() as i32)
+        })
+        .max()
+        .unwrap_or(0);
+    left = (left - glow_padding).max(0);
+    top = (top - glow_padding).max(0);
+    right = (right + glow_padding).min(width as i32);
+    bottom = (bottom + glow_padding).min(height as i32);
+    if right <= left || bottom <= top {
+        return Ok(());
+    }
+    let isolated_width = (right - left) as u32;
+    let isolated_height = (bottom - top) as u32;
+    let mut isolated_rgb = vec![0; isolated_width as usize * isolated_height as usize * 3];
+    let mut isolated_alpha = vec![0; isolated_width as usize * isolated_height as usize];
+    let mut isolated_matrix = parent_matrix;
+    isolated_matrix.tx -= f64::from(left);
+    isolated_matrix.ty -= f64::from(top);
+    // Sono-Overlay calls obj.effect() before obj.draw(..., alpha). Evaluate
+    // the source glyph and filters at full alpha, then apply the layer's
+    // complete authored/animated opacity exactly once below.
+    isolated_matrix.opacity = 1.0;
+    let mut unfiltered = element.clone();
+    unfiltered.raster_effects.clear();
+    unfiltered.opacity = 1.0;
+    unfiltered
+        .animations
+        .retain(|animation| animation.property != UiAnimationProperty::Opacity);
+    for style in &mut unfiltered.style_rules {
+        style.opacity = None;
+    }
+    render_element_unfiltered(
+        &mut isolated_rgb,
+        isolated_width,
+        isolated_height,
+        config,
+        state,
+        &unfiltered,
+        parent,
+        isolated_matrix,
+        Some(&mut isolated_alpha),
+        depth,
+    )?;
+    let (effect_rgb, effect_alpha) = apply_ui_raster_effects(
+        &isolated_rgb,
+        &isolated_alpha,
+        isolated_width,
+        isolated_height,
+        &element.raster_effects,
+        config,
+        state,
+        source_pixel_scale,
+    )?;
+    for (index, source_alpha) in effect_alpha.iter().enumerate() {
+        let source_a = (source_alpha / 255.0 * draw_opacity).clamp(0.0, 1.0);
+        if source_a <= 0.0 {
+            continue;
+        }
+        let x = left as usize + index % isolated_width as usize;
+        let y = top as usize + index / isolated_width as usize;
+        let target_index = y * width as usize + x;
+        for channel in 0..3 {
+            let source = effect_rgb[index * 3 + channel] * draw_opacity;
+            let destination = f64::from(rgb[target_index * 3 + channel]);
+            let output = match layer_blend_mode {
+                UiBlendMode::Normal => source + destination * (1.0 - source_a),
+                UiBlendMode::Add => source + destination,
+            };
+            rgb[target_index * 3 + channel] = output.round().clamp(0.0, 255.0) as u8;
+        }
+        if let Some(destination_alpha) = alpha_target.as_deref_mut() {
+            let destination_a = f64::from(destination_alpha[target_index]) / 255.0;
+            destination_alpha[target_index] = ((source_a + destination_a * (1.0 - source_a))
+                * 255.0)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_element_unfiltered(
     rgb: &mut [u8],
     width: u32,
     height: u32,
@@ -4365,6 +4717,27 @@ pub(crate) fn apply_note_hud_animations(state: &mut UiGameplayState, time: f64, 
                 progress = frame_delta(*previous_time);
             }
         }
+        // `@Combo` applies AviUtl Glow and Light only to the transient
+        // foreground glyph. Its Lua frame counter is in output frames and
+        // defaults to speed=1.0. Keep the authored piecewise parameter curve
+        // exact; the pixel filters themselves are approximated by the local
+        // compositor because AviUtl's filter implementation is unavailable.
+        let (glow_strength, light_strength) = if progress > 8.0 && progress < 11.0 {
+            (progress, progress * 6.5)
+        } else if progress >= 11.0 && progress < 14.0 {
+            (
+                (2.5 * (1.0 - (progress - 13.0) / 0.5)).max(0.0),
+                (15.0 * (1.0 - (progress - 13.0) / 0.5)).max(0.0),
+            )
+        } else {
+            (0.0, 0.0)
+        };
+        state
+            .variables
+            .insert("combo_glow_strength".into(), glow_strength);
+        state
+            .variables
+            .insert("combo_light_strength".into(), light_strength);
         state.variables.insert(
             "combo_pop_scale".into(),
             (0.5 + progress / 16.0).min(1.0).max(0.0),
@@ -4385,6 +4758,8 @@ pub(crate) fn apply_note_hud_animations(state: &mut UiGameplayState, time: f64, 
         state.variables.insert("combo_pulse_scale".into(), 1.0);
         state.variables.insert("combo_pulse_opacity".into(), 0.0);
         state.variables.insert("combo_pulse_visible".into(), 0.0);
+        state.variables.insert("combo_glow_strength".into(), 0.0);
+        state.variables.insert("combo_light_strength".into(), 0.0);
     }
     state.variables.insert(
         "combo_shadow_pulse_opacity".into(),
@@ -4395,6 +4770,46 @@ pub(crate) fn apply_note_hud_animations(state: &mut UiGameplayState, time: f64, 
             .unwrap_or(0.0)
             * state.variables["ap_combo_alpha"])
             .clamp(0.0, 1.0),
+    );
+    // `sekai.obj2` @Score uses the output frame counter for its transient
+    // score-award glyphs: visible through age 30 inclusive, moving
+    // horizontally for the first 12 frames with the source's 0.9 exponential
+    // curve, at a fixed 0.42 sprite scale. The score panel layer transform in
+    // `main2_16-9_1920x1080.object` is 150%, so source-local coordinates and
+    // the 13.65 glyph advance are converted to this 1920x1080 design space.
+    // `default.ini` sets score_speed=1.00 and wds_anim=0.
+    let score_bonus = state
+        .variables
+        .get("score_bonus")
+        .copied()
+        .or_else(|| state.variables.get("score_delta").copied())
+        .unwrap_or(0.0);
+    let score_bonus_age = state.latest_event_time.map_or(-1.0, frame_delta);
+    let score_len = if state.score < 0.0 {
+        1 + format!("{:07.0}", state.score.abs()).len()
+    } else {
+        format!("{:08.0}", state.score).len()
+    };
+    let score_bonus_progress = (score_bonus_age / 12.0).clamp(0.0, 1.0);
+    let score_bonus_curve = 1.0 - 0.9_f64.powf(score_bonus_progress * 12.0);
+    state
+        .variables
+        .insert("score_bonus_absolute".into(), score_bonus.abs());
+    state.variables.insert(
+        "score_bonus_offset_x".into(),
+        1.5 * (22.0 * (score_len as f64 - 8.0) + 47.0 * score_bonus_curve),
+    );
+    state.variables.insert(
+        "score_bonus_opacity".into(),
+        (1.3 * score_bonus_curve).clamp(0.0, 1.0),
+    );
+    state.variables.insert(
+        "score_bonus_visible".into(),
+        if score_bonus != 0.0 && state.combo > 0 && (0.0..=30.0).contains(&score_bonus_age) {
+            1.0
+        } else {
+            0.0
+        },
     );
     let judgment_progress = state.judgment_time.map(frame_delta);
     // In sekai.obj2, the fourth `obj.draw` argument is SCALE, not opacity.
@@ -6633,7 +7048,7 @@ mod tests {
     }
 
     #[test]
-    fn additive_ui_blend_matches_the_combo_pop_compositing_path() {
+    fn additive_ui_blend_preserves_premultiplied_compositing() {
         let mut normal = vec![100, 100, 100];
         blend_pixel(
             &mut normal,
@@ -6663,7 +7078,7 @@ mod tests {
     }
 
     #[test]
-    fn isolated_additive_combo_group_composites_over_gameplay_after_internal_blend() {
+    fn isolated_additive_group_composites_over_gameplay_after_internal_blend() {
         let mut config = RendererUiConfig::default();
         config.enabled = true;
         config.design_size = [1, 1];
@@ -6744,7 +7159,8 @@ mod tests {
         let mut config = RendererUiConfig::reference_default();
         assert_eq!(config.profile_name, "Asset-backed Gameplay HUD");
         assert!(config.enabled);
-        assert_eq!(config.elements.len(), 28);
+        // Includes the separate SCORE RANK caption added by the earlier repair.
+        assert_eq!(config.elements.len(), 29);
         assert_eq!(
             config.scoring.as_ref().map(|scoring| scoring.source),
             Some(UiScoringSource::SonoOverlay),
@@ -6795,8 +7211,8 @@ mod tests {
             .elements
             .iter()
             .find(|element| element.id == "combo-event-pop")
-            .expect("source-defined additive combo foreground pop layer");
-        assert_eq!(combo_pop.blend_mode, UiBlendMode::Add);
+            .expect("source-defined normal-blend AP combo foreground pop layer");
+        assert_eq!(combo_pop.blend_mode, UiBlendMode::Normal);
         let combo_shadow = config
             .elements
             .iter()
@@ -6815,7 +7231,7 @@ mod tests {
             .find(|element| element.id == "combo-event-pop")
             .expect("foreground combo pop glyphs");
         assert_eq!(combo_pop.z_index, 3);
-        assert_eq!(combo_pop.blend_mode, UiBlendMode::Add);
+        assert_eq!(combo_pop.blend_mode, UiBlendMode::Normal);
         assert!(matches!(
             &combo_pop.kind,
             UiElementKind::Counter { font: Some(font), font_size, .. }
@@ -6993,11 +7409,246 @@ mod tests {
         let at_3_2_group = responsive_group_matrix(&config, "score", 1920.0, 1280.0, at_3_2);
         assert!(at_3_2_group.a < 1.0 && at_3_2_group.a > 0.746);
 
-        assert_eq!(config.elements.len(), 28);
+        assert_eq!(config.elements.len(), 29);
         assert!(config
             .elements
             .iter()
             .all(|element| element.responsive_group.is_some()));
+    }
+
+    #[test]
+    fn score_rank_caption_uses_the_source_draw_center_and_visible_asset_bounds() {
+        let config = profile("default.json");
+        let rank = config
+            .elements
+            .iter()
+            .find(|element| element.id == "rank-letter")
+            .expect("production rank glyph");
+        let label = config
+            .elements
+            .iter()
+            .find(|element| element.id == "score-rank-label")
+            .expect("production SCORE RANK caption");
+        let alpha_bounds = |asset: &str| {
+            let bitmap = &config.loaded_assets[asset];
+            let (mut left, mut right) = (bitmap.width, 0_u32);
+            for (index, rgba) in bitmap.rgba.chunks_exact(4).enumerate() {
+                if rgba[3] != 0 {
+                    let x = index as u32 % bitmap.width;
+                    left = left.min(x);
+                    right = right.max(x);
+                }
+            }
+            let visible_center =
+                (f64::from(left + right + 1) * 0.5) - f64::from(bitmap.width) * 0.5;
+            (bitmap.width, visible_center)
+        };
+        let rank_box_width = rank.layout.width * 1920.0;
+        let label_box_width = label.layout.width * 1920.0;
+
+        // sekai.obj2 @Score draws rank text at x=-187 and the rank glyph at
+        // x=-188. The source layer is scaled 150% in the 16:9 object layout.
+        // Include the measured transparent padding of both supplied PNGs.
+        let source_layer_scale = 1.5;
+        let source_label_scale = 0.34 * (22.0 / 130.0) * source_layer_scale;
+        let source_rank_scale = 0.22 * source_layer_scale;
+        for rank_name in ["c", "b", "a", "s", "d"] {
+            let (rank_asset_width, rank_alpha_center) = alpha_bounds(&format!("rank-{rank_name}"));
+            let (label_asset_width, label_alpha_center) =
+                alpha_bounds(&format!("rank-label-{rank_name}"));
+            let rank_visible_center = (rank.layout.x + rank.layout.width * 0.5) * 1920.0
+                + rank_alpha_center / f64::from(rank_asset_width) * rank_box_width;
+            let label_visible_center = (label.layout.x + label.layout.width * 0.5) * 1920.0
+                + label_alpha_center / f64::from(label_asset_width) * label_box_width;
+            let source_visible_center_delta = source_layer_scale
+                + label_alpha_center * source_label_scale
+                - rank_alpha_center * source_rank_scale;
+            assert!(
+                (label_visible_center - rank_visible_center - source_visible_center_delta).abs()
+                    < 0.05,
+                "rank={rank_name} caption/glyph visible-center delta is {}, Sono-Overlay draws {}",
+                label_visible_center - rank_visible_center,
+                source_visible_center_delta
+            );
+        }
+    }
+
+    #[test]
+    fn score_bonus_glyphs_follow_the_lua_frame_curve_in_the_real_hud_compositor() {
+        let mut config = profile("default.json");
+        assert!(config
+            .elements
+            .iter()
+            .all(|element| element.id != "score-bonus"));
+        assert_eq!(
+            config.fonts["score-bonus"].center_spacing,
+            Some(13.65 * 1.5)
+        );
+        assert_eq!(
+            config.fonts["score-bonus-shadow"].center_spacing,
+            Some(13.65 * 1.5)
+        );
+        assert_eq!(config.fonts["score-bonus"].glyph_assets["+"], "score-plus");
+        assert_eq!(config.fonts["score-bonus"].glyph_assets["-"], "score-minus");
+        assert_eq!(
+            config.fonts["score-bonus-shadow"].glyph_assets["-"],
+            "score-minus-shadow"
+        );
+        assert_eq!(
+            config.fonts["score-bonus-shadow"].glyph_assets["8"],
+            "score-shadow-8"
+        );
+        assert_eq!(
+            config.fonts["score-bonus-shadow"].glyph_assets["+"],
+            "score-plus-shadow"
+        );
+        for (shadow_id, foreground_id) in [
+            (
+                "score-bonus-shadow-positive",
+                "score-bonus-foreground-positive",
+            ),
+            (
+                "score-bonus-shadow-negative",
+                "score-bonus-foreground-negative",
+            ),
+        ] {
+            let shadow = config
+                .elements
+                .iter()
+                .find(|element| element.id == shadow_id)
+                .unwrap();
+            let foreground = config
+                .elements
+                .iter()
+                .find(|element| element.id == foreground_id)
+                .unwrap();
+            assert_eq!(shadow.z_index, 0);
+            assert_eq!(foreground.z_index, 0);
+            assert!(matches!(&shadow.kind, UiElementKind::Counter { .. }));
+            assert!(matches!(&foreground.kind, UiElementKind::Counter { .. }));
+            assert!(
+                config
+                    .elements
+                    .iter()
+                    .position(|element| element.id == shadow_id)
+                    < config
+                        .elements
+                        .iter()
+                        .position(|element| element.id == foreground_id),
+                "Sono-Overlay draws shadow glyphs before foreground glyphs"
+            );
+        }
+        for score_digit_id in ["score-shadow", "score-value"] {
+            assert_eq!(
+                config
+                    .elements
+                    .iter()
+                    .find(|element| element.id == score_digit_id)
+                    .unwrap()
+                    .z_index,
+                1,
+                "the current score digits follow both score-award layers"
+            );
+        }
+
+        // The @Score object is at (-583.50, -471) in the centered
+        // 1920x1080 scene and uses a 150% layer transform. Its first award
+        // glyph starts at local (26.25, 34), centered on the plus glyph slot.
+        let foreground = config
+            .elements
+            .iter()
+            .find(|element| element.id == "score-bonus-foreground-positive")
+            .unwrap();
+        let font_size = match &foreground.kind {
+            UiElementKind::Counter { font_size, .. } => *font_size,
+            _ => unreachable!("score award foreground is a counter"),
+        };
+        let first_glyph_width = font_size * 33.0 / 44.0;
+        let first_glyph_center = [
+            foreground.layout.x * 1920.0 + first_glyph_width * 0.5,
+            foreground.layout.y * 1080.0 + foreground.layout.height * 1080.0 * 0.5,
+        ];
+        let source_layer_center = [1920.0 * 0.5 - 583.5, 1080.0 * 0.5 - 471.0];
+        let source_initial_center = [
+            source_layer_center[0] + 26.25 * 1.5,
+            source_layer_center[1] + 34.0 * 1.5,
+        ];
+        assert!(
+            (first_glyph_center[0] - source_initial_center[0]).abs() < 0.05
+                && (first_glyph_center[1] - source_initial_center[1]).abs() < 0.05,
+            "production score-award origin {:?} differs from Lua source {:?}",
+            first_glyph_center,
+            source_initial_center
+        );
+
+        // Source age is obj.frame - score.time * obj.framerate. The
+        // production score state at this event has eight formatted digits.
+        let mut base = UiGameplayState {
+            score: 601_632.0,
+            combo: 47,
+            latest_event_time: Some(2.0),
+            ..UiGameplayState::default()
+        };
+        base.variables.insert("score_bonus".into(), 100.0);
+        let source_curve = |age: f64| 1.0 - 0.9_f64.powf(age.min(12.0));
+        for age in [0.0, 1.0, 12.0, 30.0, 31.0] {
+            let mut state = base.clone();
+            apply_note_hud_animations(&mut state, 2.0 + age / 60.0, 60.0);
+            let curve = source_curve(age);
+            assert!((state.variables["score_bonus_offset_x"] - 1.5 * 47.0 * curve).abs() < 1e-10);
+            assert_eq!(
+                state.variables["score_bonus_opacity"],
+                (1.3 * curve).clamp(0.0, 1.0)
+            );
+            assert_eq!(
+                state.variables["score_bonus_visible"],
+                if age <= 30.0 { 1.0 } else { 0.0 }
+            );
+        }
+        let mut score_len_nine = base.clone();
+        score_len_nine.score = 123_456_789.0;
+        apply_note_hud_animations(&mut score_len_nine, 2.0, 60.0);
+        assert_eq!(
+            score_len_nine.variables["score_bonus_offset_x"],
+            22.0 * 1.5 * (9.0 - 8.0)
+        );
+
+        config
+            .elements
+            .retain(|element| element.id.starts_with("score-bonus-"));
+        let render_bonus = |age: f64| {
+            let mut gameplay = base.clone();
+            let time = 2.0 + age / 60.0;
+            apply_note_hud_animations(&mut gameplay, time, 60.0);
+            let state = UiFrameState {
+                time,
+                frame_rate: 60.0,
+                gameplay: Some(gameplay),
+                ..UiFrameState::default()
+            };
+            let mut frame = vec![0; 1920 * 1080 * 3];
+            render_gameplay_ui(&mut frame, 1920, 1080, &config, &state).unwrap();
+            frame
+        };
+        let at_one = render_bonus(1.0);
+        let at_twelve = render_bonus(12.0);
+        let at_thirty = render_bonus(30.0);
+        let after_window = render_bonus(31.0);
+        assert!(at_one.iter().any(|channel| *channel != 0));
+        assert_ne!(
+            at_one, at_twelve,
+            "the rendered glyph group must move and brighten"
+        );
+        assert_eq!(
+            at_twelve, at_thirty,
+            "the source curve holds after frame 12"
+        );
+        assert!(after_window.iter().all(|channel| *channel == 0));
+        assert_eq!(
+            at_twelve,
+            render_bonus(12.0),
+            "repeated timestamp render is deterministic"
+        );
     }
 
     #[test]
@@ -7149,6 +7800,18 @@ mod tests {
                     state.variables["combo_pulse_visible"],
                     if age < 14.0 { 1.0 } else { 0.0 }
                 );
+                let expected_effects = if age > 8.0 && age < 11.0 {
+                    (age, age * 6.5)
+                } else if age >= 11.0 && age < 14.0 {
+                    (
+                        (2.5 * (1.0 - (age - 13.0) / 0.5)).max(0.0),
+                        (15.0 * (1.0 - (age - 13.0) / 0.5)).max(0.0),
+                    )
+                } else {
+                    (0.0, 0.0)
+                };
+                assert_eq!(state.variables["combo_glow_strength"], expected_effects.0);
+                assert_eq!(state.variables["combo_light_strength"], expected_effects.1);
 
                 let expected_judgment_scale = if age < 2.0 {
                     1.0
@@ -7174,6 +7837,326 @@ mod tests {
                     expected_judgment_visibility
                 );
             }
+        }
+    }
+
+    #[test]
+    fn raster_backlight_emits_outside_the_matte_without_brightening_opaque_core() {
+        let config = RendererUiConfig::default();
+        let state = UiFrameState::default();
+        let width = 65;
+        let mut alpha = vec![0; width * width];
+        let mut rgb = vec![0; width * width * 3];
+        let center = 32 * width + 32;
+        alpha[center] = 255;
+        rgb[center * 3..center * 3 + 3].copy_from_slice(&[40, 90, 150]);
+        let effect = UiRasterEffect::Light {
+            strength: UiExpression::Constant { value: 65.0 },
+            backlight: true,
+        };
+        let (lit, matte) = apply_ui_raster_effects(
+            &rgb,
+            &alpha,
+            width as u32,
+            width as u32,
+            &[effect],
+            &config,
+            &state,
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(&lit[center * 3..center * 3 + 3], &[40.0, 90.0, 150.0]);
+        assert_eq!(matte[center], 255.0);
+        let halo = center + 10;
+        assert!(lit[halo * 3] > 0.0 && matte[halo] > 0.0);
+        assert_eq!(lit[halo * 3], lit[halo * 3 + 2]);
+        assert!((lit[halo * 3] - lit[(center - 10) * 3]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn raster_glow_retains_hdr_emission_until_draw_opacity() {
+        let config = RendererUiConfig::default();
+        let (lit, alpha) = apply_ui_raster_effects(
+            &[255; 27],
+            &[255; 9],
+            3,
+            3,
+            &[UiRasterEffect::Glow {
+                strength: UiExpression::Constant { value: 10.0 },
+                blur: 1.0,
+            }],
+            &config,
+            &UiFrameState::default(),
+            1.0,
+        )
+        .unwrap();
+        assert!(lit[12] > 350.0, "emission was clipped before draw alpha");
+        assert_eq!(alpha[4], 255.0);
+        // At age 10 the Lua draws with 2/7 opacity: clipping to 255 first
+        // incorrectly produces 73 instead of the calibrated ~102.
+        assert!((lit[12] * (1.0 - 10.0 / 14.0)).round() >= 100.0);
+    }
+
+    #[test]
+    #[ignore = "local reference calibration: requests and captures live in target/combo-calibration"]
+    fn capture_combo_reference_calibration() {
+        #[derive(Deserialize)]
+        struct Case {
+            id: String,
+            combo: i64,
+            age: f64,
+            time: f64,
+            #[serde(default)]
+            part: String,
+            #[serde(default)]
+            ap_alpha: Option<f64>,
+            #[serde(default = "default_true")]
+            effects: bool,
+        }
+        fn default_true() -> bool {
+            true
+        }
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/combo-calibration");
+        let cases: Vec<Case> =
+            serde_json::from_slice(&std::fs::read(directory.join("requests.json")).unwrap())
+                .unwrap();
+        let production = profile("default.json");
+        let output = directory.join("captures");
+        std::fs::create_dir_all(&output).unwrap();
+        for case in cases {
+            assert!(case
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            let mut config = production.clone();
+            config.elements.retain(|element| match case.part.as_str() {
+                "title" => matches!(element.id.as_str(), "combo-glow" | "combo-title"),
+                "pop-input" => element.id == "combo-event-pop",
+                "base" => matches!(
+                    element.id.as_str(),
+                    "combo-value" | "combo-shadow-value" | "combo-event-pulse"
+                ),
+                _ => matches!(
+                    element.id.as_str(),
+                    "combo-shadow-value" | "combo-value" | "combo-event-pulse" | "combo-event-pop"
+                ),
+            });
+            if !case.effects || case.part == "pop-input" {
+                for element in &mut config.elements {
+                    element.raster_effects.clear();
+                }
+            }
+            let mut gameplay = UiGameplayState {
+                combo: case.combo,
+                latest_event_time: Some(case.time - case.age / 60.0),
+                ..UiGameplayState::default()
+            };
+            apply_note_hud_animations(&mut gameplay, case.time, 60.0);
+            if let Some(alpha) = case.ap_alpha {
+                gameplay.variables.insert("ap_combo_alpha".into(), alpha);
+                gameplay.variables.insert(
+                    "combo_shadow_pulse_opacity".into(),
+                    alpha * (1.0 - case.age / 14.0).clamp(0.0, 1.0),
+                );
+            }
+            let state = UiFrameState {
+                time: case.time,
+                frame_rate: 60.0,
+                gameplay: Some(gameplay),
+                ..UiFrameState::default()
+            };
+            let mut frame = rgb(1920, 1080, [0, 0, 0]);
+            if case.part == "pop-input" {
+                let element = &mut config.elements[0];
+                element
+                    .animations
+                    .retain(|animation| animation.property != UiAnimationProperty::Opacity);
+                element.blend_mode = UiBlendMode::Normal;
+                let element = element.clone();
+                let mut alpha = vec![0; 1920 * 1080];
+                let root = ui_root_matrix(1920.0, 1080.0, config.design_size, config.fit);
+                render_element(
+                    &mut frame,
+                    1920,
+                    1080,
+                    &config,
+                    &state,
+                    &element,
+                    UiRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1920.0,
+                        height: 1080.0,
+                    },
+                    root,
+                    Some(&mut alpha),
+                    0,
+                )
+                .unwrap();
+                let mut rgba = image::RgbaImage::new(550, 340);
+                for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+                    let index = ((y + 300) * 1920 + (x + 1350)) as usize;
+                    *pixel = image::Rgba([
+                        frame[index * 3],
+                        frame[index * 3 + 1],
+                        frame[index * 3 + 2],
+                        alpha[index],
+                    ]);
+                }
+                rgba.save(output.join(format!("{}.png", case.id))).unwrap();
+            } else {
+                render_gameplay_ui(&mut frame, 1920, 1080, &config, &state).unwrap();
+                let image = image::RgbImage::from_raw(1920, 1080, frame).unwrap();
+                image::imageops::crop_imm(&image, 1350, 300, 550, 340)
+                    .to_image()
+                    .save(output.join(format!("{}.png", case.id)))
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn production_combo_profile_applies_time_varying_glow_and_light_to_pop_only() {
+        const WIDTH: u32 = 1920;
+        const HEIGHT: u32 = 1080;
+        const EVENT_TIME: f64 = 1.0;
+        const AGES: [f64; 11] = [0.0, 1.0, 4.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 13.5, 14.0];
+        const COMBOS: [i64; 4] = [46, 48, 266, 296];
+
+        let production = profile("default.json");
+        let pop = production
+            .elements
+            .iter()
+            .find(|element| element.id == "combo-event-pop")
+            .expect("production profile has transient combo foreground");
+        assert_eq!(pop.isolation_group.as_deref(), Some("combo-number"));
+        assert_eq!(pop.blend_mode, UiBlendMode::Normal);
+        assert_eq!(pop.raster_effects.len(), 2);
+        assert!(matches!(
+            pop.raster_effects[0],
+            UiRasterEffect::Glow { blur: 5.0, .. }
+        ));
+        assert!(matches!(
+            pop.raster_effects[1],
+            UiRasterEffect::Light {
+                backlight: true,
+                ..
+            }
+        ));
+
+        let render = |combo: i64, age: f64, include_effects: bool, all_layers: bool| {
+            let mut config = production.clone();
+            config.elements.retain(|element| {
+                if all_layers {
+                    matches!(
+                        element.id.as_str(),
+                        "combo-shadow-value"
+                            | "combo-value"
+                            | "combo-event-pulse"
+                            | "combo-event-pop"
+                    )
+                } else {
+                    element.id == "combo-event-pop"
+                }
+            });
+            if !include_effects {
+                config
+                    .elements
+                    .iter_mut()
+                    .find(|element| element.id == "combo-event-pop")
+                    .unwrap()
+                    .raster_effects
+                    .clear();
+            }
+            let time = EVENT_TIME + age / 60.0;
+            let mut gameplay = UiGameplayState {
+                combo,
+                latest_event_time: Some(EVENT_TIME),
+                ..UiGameplayState::default()
+            };
+            gameplay
+                .variables
+                .insert("combo_event_time".into(), EVENT_TIME);
+            apply_note_hud_animations(&mut gameplay, time, 60.0);
+            let frame_state = UiFrameState {
+                time,
+                frame_rate: 60.0,
+                gameplay: Some(gameplay),
+                ..UiFrameState::default()
+            };
+            let mut frame = rgb(WIDTH, HEIGHT, [0, 0, 0]);
+            render_gameplay_ui(&mut frame, WIDTH, HEIGHT, &config, &frame_state).unwrap();
+            frame
+        };
+
+        let age_nine_with = render(48, 9.0, true, false);
+        let age_nine_without = render(48, 9.0, false, false);
+        let changed_pixels = age_nine_with
+            .chunks_exact(3)
+            .zip(age_nine_without.chunks_exact(3))
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            changed_pixels > 100,
+            "Glow/Light omission changed only {changed_pixels} pixels"
+        );
+
+        // The same event age is independent of render traversal history.
+        let repeated = render(48, 12.0, true, true);
+        assert_eq!(repeated, render(48, 12.0, true, true));
+
+        if let Some(capture_dir) = std::env::var_os("SONO_RENDERER_COMBO_CAPTURE_DIR") {
+            let capture_dir = std::path::PathBuf::from(capture_dir);
+            std::fs::create_dir_all(&capture_dir).unwrap();
+            let crop_x = 1350;
+            let crop_y = 280;
+            let crop_width = 550;
+            let crop_height = 400;
+            let columns = 3;
+            let rows = AGES.len().div_ceil(columns);
+            let mut manifest = String::from(
+                "Sono-Renderer production default profile combo raster output; 1920x1080, 60 fps. Each tile is 550x400 cropped at x=1350,y=280. Columns follow ages in this manifest; row starts a new combo value.\n",
+            );
+            for combo in COMBOS {
+                let mut sheet =
+                    image::RgbImage::new(crop_width * columns as u32, crop_height * rows as u32);
+                let mut without_effects =
+                    image::RgbImage::new(crop_width * columns as u32, crop_height * rows as u32);
+                for (index, age) in AGES.iter().copied().enumerate() {
+                    let frame = render(combo, age, true, true);
+                    let image = image::RgbImage::from_raw(WIDTH, HEIGHT, frame).unwrap();
+                    let crop =
+                        image::imageops::crop_imm(&image, crop_x, crop_y, crop_width, crop_height)
+                            .to_image();
+                    let x = (index % columns) as u32 * crop_width;
+                    let y = (index / columns) as u32 * crop_height;
+                    image::imageops::replace(&mut sheet, &crop, i64::from(x), i64::from(y));
+                    let baseline = render(combo, age, false, true);
+                    let baseline = image::RgbImage::from_raw(WIDTH, HEIGHT, baseline).unwrap();
+                    let baseline_crop = image::imageops::crop_imm(
+                        &baseline,
+                        crop_x,
+                        crop_y,
+                        crop_width,
+                        crop_height,
+                    )
+                    .to_image();
+                    image::imageops::replace(
+                        &mut without_effects,
+                        &baseline_crop,
+                        i64::from(x),
+                        i64::from(y),
+                    );
+                    manifest.push_str(&format!("combo={combo}, tile={index}, age={age} frames\n"));
+                }
+                sheet
+                    .save(capture_dir.join(format!("combo-{combo}-ages.png")))
+                    .unwrap();
+                without_effects
+                    .save(capture_dir.join(format!("combo-{combo}-ages-without-glow-light.png")))
+                    .unwrap();
+            }
+            std::fs::write(capture_dir.join("manifest.txt"), manifest).unwrap();
         }
     }
 
@@ -8546,7 +9529,7 @@ mod tests {
             .contains(&"combo.glyph-family.p".into()));
         // The reference-based profile now includes the static combo shadow
         // plus both persistent and event-pulse combo glyph layers.
-        assert_eq!(report.configured_elements, 28);
+        assert_eq!(report.configured_elements, 29);
         let combo_shadow = &imported.fonts["combo-burst"];
         assert_eq!(combo_shadow.center_spacing, Some(108.0));
         assert!(combo_shadow.glyph_advances.is_empty());

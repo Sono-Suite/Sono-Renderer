@@ -61,6 +61,8 @@
                    "score-markers":  "pack://score.fg",
                    "score-plus":  "pack://score.digit.+",
                    "score-plus-shadow":  "pack://score.digit.s+",
+                   "score-minus":  "pack://score.digit.-",
+                   "score-minus-shadow":  "pack://score.digit.s-",
                    "rank-c":  "pack://score.rank.chr.c",
                    "rank-b":  "pack://score.rank.chr.b",
                    "rank-a":  "pack://score.rank.chr.a",
@@ -196,6 +198,56 @@
                                                             "9":  "score-shadow-9"
                                                         }
                                    },
+                  "score-bonus":  {
+                                       "glyph_width":  33,
+                                       "glyph_height":  44,
+                                       "columns":  1,
+                                       "advance":  1.0,
+                                       "center_spacing":  20.475,
+                                       "glyph_scales":  {
+                                                            "+":  0.5454545454545454,
+                                                            "-":  0.5454545454545454
+                                                        },
+                                       "glyph_assets":  {
+                                                            "+":  "score-plus",
+                                                            "-":  "score-minus",
+                                                            "0":  "score-digit-0",
+                                                            "1":  "score-digit-1",
+                                                            "2":  "score-digit-2",
+                                                            "3":  "score-digit-3",
+                                                            "4":  "score-digit-4",
+                                                            "5":  "score-digit-5",
+                                                            "6":  "score-digit-6",
+                                                            "7":  "score-digit-7",
+                                                            "8":  "score-digit-8",
+                                                            "9":  "score-digit-9"
+                                                        }
+                                   },
+                  "score-bonus-shadow":  {
+                                              "glyph_width":  33,
+                                              "glyph_height":  44,
+                                              "columns":  1,
+                                              "advance":  1.0,
+                                              "center_spacing":  20.475,
+                                              "glyph_scales":  {
+                                                                   "+":  0.7272727272727273,
+                                                                   "-":  0.7272727272727273
+                                                               },
+                                              "glyph_assets":  {
+                                                                   "+":  "score-plus-shadow",
+                                                                   "-":  "score-minus-shadow",
+                                                                   "0":  "score-shadow-0",
+                                                                   "1":  "score-shadow-1",
+                                                                   "2":  "score-shadow-2",
+                                                                   "3":  "score-shadow-3",
+                                                                   "4":  "score-shadow-4",
+                                                                   "5":  "score-shadow-5",
+                                                                   "6":  "score-shadow-6",
+                                                                   "7":  "score-shadow-7",
+                                                                   "8":  "score-shadow-8",
+                                                                   "9":  "score-shadow-9"
+                                                               }
+                                          },
                   "life":  {
                                "glyph_width":  1000,
                                "glyph_height":  1333,
@@ -477,7 +529,7 @@
                          "kind":  "image",
                          "asset":  "rank-label-c",
                          "layout":  {
-                                        "x":  0.0255,
+                                        "x":  0.02378702,
                                         "y":  0.108,
                                         "width":  0.047,
                                         "height":  0.012
@@ -586,6 +638,7 @@
                      },
                      {
                          "id":  "score-shadow",
+                         "z_index":  1,
                          "responsive_group": "score",
                          "kind":  "counter",
                          "layout":  {
@@ -639,258 +692,133 @@
                                        255
                                    ]
                      },
+
+
+
                      {
-                         "id":  "score-bonus-sign-shadow",
-                         "responsive_group": "score",
-                         "kind":  "image",
-                         "asset":  "score-plus-shadow",
-                         "layout":  {
-                                        "x":  0.229,
-                                        "y":  0.101,
-                                        "width":  0.01,
-                                        "height":  0.022
-                                    },
-                         "visible_when":  {
-                                              "kind":  "all",
-                                              "conditions":  [
-                                                                 {
-                                                                     "kind":  "greater",
-                                                                     "left":  {
-                                                                                  "kind":  "source",
-                                                                                  "source":  {
-                                                                                                 "kind":  "gameplay-variable",
-                                                                                                 "name":  "score_bonus"
-                                                                                             }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  0
-                                                                               }
-                                                                 },
-                                                                 {
-                                                                     "kind":  "less",
-                                                                     "left":  {
-                                                                                  "kind":  "subtract",
-                                                                                  "left":  {
-                                                                                               "kind":  "source",
-                                                                                               "source":  {
-                                                                                                              "kind":  "time"
-                                                                                                          }
-                                                                                           },
-                                                                                  "right":  {
-                                                                                                "kind":  "source",
-                                                                                                "source":  {
-                                                                                                               "kind":  "latest-event-time"
-                                                                                                           }
-                                                                                            }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  1.0
-                                                                               }
-                                                                 }
-                                                             ]
-                                          },
-                         "animations":  [
-                                            {
-                                                "property":  "opacity",
-                                                "from":  1.0,
-                                                "to":  0.0,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            },
-                                            {
-                                                "property":  "offset-y",
-                                                "from":  0.0,
-                                                "to":  -15.5,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            }
-                                        ]
-                     },
-                     {
-                         "id":  "score-bonus-sign",
-                         "responsive_group": "score",
-                         "kind":  "image",
-                         "z_index":  1,
-                         "asset":  "score-plus",
-                         "layout":  {
-                                        "x":  0.227,
-                                        "y":  0.099,
-                                        "width":  0.01,
-                                        "height":  0.022
-                                    },
-                         "visible_when":  {
-                                              "kind":  "all",
-                                              "conditions":  [
-                                                                 {
-                                                                     "kind":  "greater",
-                                                                     "left":  {
-                                                                                  "kind":  "source",
-                                                                                  "source":  {
-                                                                                                 "kind":  "gameplay-variable",
-                                                                                                 "name":  "score_bonus"
-                                                                                             }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  0
-                                                                               }
-                                                                 },
-                                                                 {
-                                                                     "kind":  "less",
-                                                                     "left":  {
-                                                                                  "kind":  "subtract",
-                                                                                  "left":  {
-                                                                                               "kind":  "source",
-                                                                                               "source":  {
-                                                                                                              "kind":  "time"
-                                                                                                          }
-                                                                                           },
-                                                                                  "right":  {
-                                                                                                "kind":  "source",
-                                                                                                "source":  {
-                                                                                                               "kind":  "latest-event-time"
-                                                                                                           }
-                                                                                            }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  1.0
-                                                                               }
-                                                                 }
-                                                             ]
-                                          },
-                         "animations":  [
-                                            {
-                                                "property":  "opacity",
-                                                "from":  1.0,
-                                                "to":  0.0,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            },
-                                            {
-                                                "property":  "offset-y",
-                                                "from":  0.0,
-                                                "to":  -15.5,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            }
-                                        ]
-                     },
-                     {
-                         "id":  "score-bonus",
-                         "responsive_group": "score",
+                         "id":  "score-bonus-shadow-positive",
+                         "responsive_group":  "score",
                          "kind":  "counter",
                          "layout":  {
-                                        "x":  0.245,
-                                        "y":  0.098,
-                                        "width":  0.075,
-                                        "height":  0.04
+                                        "x":  0.2111875,
+                                        "y":  0.09827777777777778,
+                                        "width":  0.11,
+                                        "height":  0.025666666666666667
                                     },
+                         "prefix":  "+",
                          "value":  {
                                        "kind":  "source",
-                                       "source":  {
-                                                      "kind":  "gameplay-variable",
-                                                      "name":  "score_bonus"
-                                                  }
+                                       "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_absolute"}
                                    },
-                         "digits":  3,
-                         "font":  "score",
-                         "font_size":  26,
+                         "font":  "score-bonus-shadow",
+                         "font_size":  27.72,
                          "align":  "left",
-                         "color":  [
-                                       171,
-                                       177,
-                                       190,
-                                       255
-                                   ],
+                         "color":  [255, 255, 255, 255],
                          "visible_when":  {
                                               "kind":  "all",
                                               "conditions":  [
-                                                                 {
-                                                                     "kind":  "greater",
-                                                                     "left":  {
-                                                                                  "kind":  "source",
-                                                                                  "source":  {
-                                                                                                 "kind":  "gameplay-variable",
-                                                                                                 "name":  "score_bonus"
-                                                                                             }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  0
-                                                                               }
-                                                                 },
-                                                                 {
-                                                                     "kind":  "less",
-                                                                     "left":  {
-                                                                                  "kind":  "subtract",
-                                                                                  "left":  {
-                                                                                               "kind":  "source",
-                                                                                               "source":  {
-                                                                                                              "kind":  "time"
-                                                                                                          }
-                                                                                           },
-                                                                                  "right":  {
-                                                                                                "kind":  "source",
-                                                                                                "source":  {
-                                                                                                               "kind":  "latest-event-time"
-                                                                                                           }
-                                                                                            }
-                                                                              },
-                                                                     "right":  {
-                                                                                   "kind":  "constant",
-                                                                                   "value":  1.0
-                                                                               }
-                                                                 }
+                                                                 {"kind":  "truthy", "value":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_visible"}}},
+                                                                 {"kind":  "greater", "left":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus"}}, "right":  {"kind":  "constant", "value":  0}}
                                                              ]
                                           },
                          "animations":  [
-                                            {
-                                                "property":  "opacity",
-                                                "from":  1.0,
-                                                "to":  0.0,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            },
-                                            {
-                                                "property":  "offset-y",
-                                                "from":  0.0,
-                                                "to":  -15.5,
-                                                "start":  0,
-                                                "start_from":  {
-                                                                   "kind":  "latest-event-time"
-                                                               },
-                                                "duration":  1.0,
-                                                "repeat":  false,
-                                                "easing":  "ease-out"
-                                            }
+                                            {"property":  "opacity", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_opacity"}}},
+                                            {"property":  "offset-x", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_offset_x"}}}
+                                        ]
+                     },
+                     {
+                         "id":  "score-bonus-foreground-positive",
+                         "responsive_group":  "score",
+                         "kind":  "counter",
+                         "z_index":  0,
+                         "layout":  {
+                                        "x":  0.2111875,
+                                        "y":  0.09827777777777778,
+                                        "width":  0.11,
+                                        "height":  0.025666666666666667
+                                    },
+                         "prefix":  "+",
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_absolute"}
+                                   },
+                         "font":  "score-bonus",
+                         "font_size":  27.72,
+                         "align":  "left",
+                         "color":  [255, 255, 255, 255],
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {"kind":  "truthy", "value":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_visible"}}},
+                                                                 {"kind":  "greater", "left":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus"}}, "right":  {"kind":  "constant", "value":  0}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {"property":  "opacity", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_opacity"}}},
+                                            {"property":  "offset-x", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_offset_x"}}}
+                                        ]
+                     },
+                     {
+                         "id":  "score-bonus-shadow-negative",
+                         "responsive_group":  "score",
+                         "kind":  "counter",
+                         "layout":  {
+                                        "x":  0.2111875,
+                                        "y":  0.09827777777777778,
+                                        "width":  0.11,
+                                        "height":  0.025666666666666667
+                                    },
+                         "prefix":  "-",
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_absolute"}
+                                   },
+                         "font":  "score-bonus-shadow",
+                         "font_size":  27.72,
+                         "align":  "left",
+                         "color":  [255, 255, 255, 255],
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {"kind":  "truthy", "value":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_visible"}}},
+                                                                 {"kind":  "less", "left":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus"}}, "right":  {"kind":  "constant", "value":  0}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {"property":  "opacity", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_opacity"}}},
+                                            {"property":  "offset-x", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_offset_x"}}}
+                                        ]
+                     },
+                     {
+                         "id":  "score-bonus-foreground-negative",
+                         "responsive_group":  "score",
+                         "kind":  "counter",
+                         "z_index":  0,
+                         "layout":  {
+                                        "x":  0.2111875,
+                                        "y":  0.09827777777777778,
+                                        "width":  0.11,
+                                        "height":  0.025666666666666667
+                                    },
+                         "prefix":  "-",
+                         "value":  {
+                                       "kind":  "source",
+                                       "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_absolute"}
+                                   },
+                         "font":  "score-bonus",
+                         "font_size":  27.72,
+                         "align":  "left",
+                         "color":  [255, 255, 255, 255],
+                         "visible_when":  {
+                                              "kind":  "all",
+                                              "conditions":  [
+                                                                 {"kind":  "truthy", "value":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_visible"}}},
+                                                                 {"kind":  "less", "left":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus"}}, "right":  {"kind":  "constant", "value":  0}}
+                                                             ]
+                                          },
+                         "animations":  [
+                                            {"property":  "opacity", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_opacity"}}},
+                                            {"property":  "offset-x", "value_from_state":  {"kind":  "source", "source":  {"kind":  "gameplay-variable", "name":  "score_bonus_offset_x"}}}
                                         ]
                      },
                      {
@@ -1505,7 +1433,7 @@
                          "responsive_group": "combo",
                          "kind":  "counter",
                          "z_index":  3,
-                         "blend_mode": "add",
+                         "blend_mode": "normal",
                          "layout":  {
                                         "x":  0.85078125,
                                         "y":  0.4412037037037037,
@@ -1557,7 +1485,19 @@
                                                 "easing":  "linear",
                                                 "value_from_state":  {"kind": "source", "source": {"kind": "gameplay-variable", "name": "combo_pulse_opacity"}}
                                             }
-                                        ]
+                                        ],
+                         "raster_effects":  [
+                                                {
+                                                    "kind":  "glow",
+                                                    "strength":  {"kind": "source", "source": {"kind": "gameplay-variable", "name": "combo_glow_strength"}},
+                                                    "blur":  5.0
+                                                },
+                                                {
+                                                    "kind":  "light",
+                                                    "strength":  {"kind": "source", "source": {"kind": "gameplay-variable", "name": "combo_light_strength"}},
+                                                    "backlight":  true
+                                                }
+                                            ]
                      },
                      {
                          "id":  "judgement-perfect",
