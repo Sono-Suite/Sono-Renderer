@@ -16,13 +16,21 @@ configuration, project, queue, render, and persistence code; the GUI does not
 have a second Watch evaluator or renderer.
 
 The desktop shell persists a `WorkflowId` route separately from `WorkspaceId`
-panel-layout preferences. `Desktop::ui` renders the active Home, Quick Render,
-Chart Studio, Presentation Studio, Production, Tools, Settings, or Diagnostics
-surface while retaining the existing documents and shared services. Legacy
-workspace identifiers migrate to the nearest workflow; Presentation Studio's
-Editing and Voiceover layouts only change panel visibility and timeline
-dimensions. The concrete route/menu boundaries and known limits are in the
-[UI information architecture report](../UI_INFORMATION_ARCHITECTURE_OVERHAUL.md).
+panel-layout preferences. Its default navigation, palette, and shortcut editor
+register Home, Quick Render, Production, Tools, Settings, and Diagnostics.
+Chart Studio and Presentation Studio routes, documents, and services remain in
+the source, but are omitted from default UI registration; saved editor routes
+fall back to Quick Render at startup. The complete workflow IDs, command IDs,
+and document formats remain intact. `Desktop::ui` still contains the retained
+surfaces for a future interface to register. Presentation Studio's Editing and
+Voiceover layouts only change panel visibility and timeline dimensions. The
+[workspace guide](WORKSPACE_COMMANDS.md) describes the current registration
+boundary and its customization limits.
+
+The desktop frontend is native Rust `eframe`/`egui`. The separate React/Vite
+client in `web/` is an administration console served by the optional Rust Axum
+service; it consumes service DTOs and does not implement another renderer or
+desktop workflow.
 
 ```mermaid
 flowchart TD
@@ -144,6 +152,11 @@ which constructs callbacks and invokes `WatchVm`. The report and owned
 `PreparedFrame` snapshot feed rendering, UI, particles, and audio collection;
 the pipeline consumer does not run Watch.
 
+The chart renderer executes `EngineWatchData`. `EnginePlayData` is retained
+for declarations and analysis; the application does not implement the
+Sonolus client's interactive Play or Preview modes. **Program Preview** is a
+still-frame render through this Watch and compositor path.
+
 This is the “one Watch” invariant: ordinary export playback executes one
 `FrameSession` traversal. Whole-chart discovery is a bounded preflight for
 schedule/end evidence and does not run playback frames. Explicit determinism
@@ -152,6 +165,15 @@ compatibility dynamic probes invoke the same Watch runtime/evaluator; neither
 contains a parallel operation interpreter. The old event-only audio profiling
 accumulator is now test-only, and the production profile no longer exposes
 retired event-only counters as mutable state.
+
+`WatchData` deserializes the optional `entityMemoryLength`,
+`entityDataLength`, and `entitySharedMemoryLength` fields with defaults of
+64/32/32. `WatchRuntime` applies them to Entity Memory bounds, per-entity
+Entity Data and Shared Memory row strides, imports, and spawned-entity memory
+payloads. Length conversions and dense-array size calculations are checked;
+the renderer applies a 256 MiB allocation safeguard that is not a Sonolus
+protocol limit. The 1.1.5 out-of-range read/write behavior is implemented from
+static prototype findings and remains unverified against the APK at runtime.
 
 `sono_gcc.rs` compiles only statically eligible scalar regions. Watch VM
 evaluates runtime cuts, dynamic or effectful nodes, and every unsupported
@@ -380,7 +402,7 @@ config so later UI/profile mutation cannot affect it; GPU upload/readback and
 FFmpeg buffers are required backend/process boundaries. This pass made no
 performance-motivated allocator or copy changes. See the paired baseline and
 post-cleanup measurements in the
-[Follow-up #21 report](../SONO_RENDERER_FOLLOWUP_21_MAINTAINABILITY_REPORT.md).
+[Follow-up #21 report](reports/follow-ups/SONO_RENDERER_FOLLOWUP_21_MAINTAINABILITY_REPORT.md).
 
 ## Behavior invariants and freeze boundary
 

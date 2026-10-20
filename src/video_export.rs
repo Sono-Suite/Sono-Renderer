@@ -2081,6 +2081,16 @@ mod tests {
     #[test]
     #[ignore = "real FFmpeg export integration: run explicitly for the current Windows toolchain"]
     fn real_automatic_ap_chart_export_contains_gameplay_ui() {
+        real_ap_chart_export(false);
+    }
+
+    #[test]
+    #[ignore = "real FFmpeg export integration: run explicitly for the current Windows toolchain"]
+    fn real_optional_score_count_chart_export() {
+        real_ap_chart_export(true);
+    }
+
+    fn real_ap_chart_export(animate_score_count: bool) {
         let tools = crate::export_mv::tests::tools()
             .expect("checked-in FFmpeg 8.1 pair for real export validation");
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2139,7 +2149,12 @@ mod tests {
             .unconfigured_element_families
             .iter()
             .all(|family| family != "combo.glyph-family.n"));
-        config.ui = imported_ui;
+        config.ui = if animate_score_count {
+            crate::render_ui::RendererUiConfig::reference_default()
+        } else {
+            imported_ui
+        };
+        config.ui.animate_score_count = animate_score_count;
         config.ui.enabled = true;
         // Exercise the user-facing default: no scoring block and no manual
         // event file. The shared render session must prepare All Perfect data.
@@ -2175,7 +2190,78 @@ mod tests {
         // enables both Glow and Light. The full age sequence is captured by
         // the compositor test; this integration checks its real MP4 path.
         config.start_time = combo_46_time + 9.0 / 60.0;
-        config.duration = 3.0 / 60.0;
+        config.duration = if animate_score_count { 15.0 } else { 3.0 } / 60.0;
+        if animate_score_count {
+            let mut prepared = config.ui.clone();
+            prepared.prepare_scoring_for_level(&level);
+            let state = prepared
+                .gameplay_state_at_with_frame_rate(config.start_time, 60.0)
+                .unwrap()
+                .unwrap();
+            assert!(state.variables["display_score_count"] < state.score);
+            println!(
+                "Opt-in main score: displayed={}, authoritative={}",
+                state.variables["display_score_count"], state.score
+            );
+            prepared.prepare_external_data().unwrap();
+            let mut samples = Vec::new();
+            for frame in [0, 7, 14] {
+                let time = config.start_time + f64::from(frame) / 60.0;
+                let mut gameplay = prepared
+                    .gameplay_state_at_with_frame_rate(time, 60.0)
+                    .unwrap()
+                    .unwrap();
+                samples.push(serde_json::json!({
+                    "frame": frame, "time": time, "score": gameplay.score,
+                    "displayed": gameplay.variables["display_score_count"]
+                }));
+                let frame_state = crate::render_ui::UiFrameState {
+                    time,
+                    frame_rate: 60.0,
+                    gameplay: Some(gameplay.clone()),
+                    ..Default::default()
+                };
+                let mut animated = vec![0; 1920 * 1080 * 3];
+                crate::render_ui::render_gameplay_ui(
+                    &mut animated,
+                    1920,
+                    1080,
+                    &prepared,
+                    &frame_state,
+                )
+                .unwrap();
+                image::RgbImage::from_raw(1920, 1080, animated.clone())
+                    .unwrap()
+                    .save(output_directory.join(format!("score-count-preview-{frame}.png")))
+                    .unwrap();
+                let mut immediate = vec![0; animated.len()];
+                let mut instant_config = prepared.clone();
+                instant_config.animate_score_count = false;
+                gameplay.variables.remove("display_score_count");
+                let instant_state = crate::render_ui::UiFrameState {
+                    gameplay: Some(gameplay),
+                    ..frame_state
+                };
+                crate::render_ui::render_gameplay_ui(
+                    &mut immediate,
+                    1920,
+                    1080,
+                    &instant_config,
+                    &instant_state,
+                )
+                .unwrap();
+                assert_ne!(animated, immediate);
+                image::RgbImage::from_raw(1920, 1080, immediate)
+                    .unwrap()
+                    .save(output_directory.join(format!("score-count-immediate-{frame}.png")))
+                    .unwrap();
+            }
+            std::fs::write(
+                output_directory.join("score-count-samples.json"),
+                serde_json::to_vec_pretty(&samples).unwrap(),
+            )
+            .unwrap();
+        }
 
         let report = export_config_with_tools_controlled(
             &config,
@@ -2184,7 +2270,10 @@ mod tests {
             crate::export_control::ExportControl::default(),
         )
         .unwrap();
-        assert_eq!(report.submitted_frames, 3);
+        assert_eq!(
+            report.submitted_frames,
+            if animate_score_count { 15 } else { 3 }
+        );
         assert!(config.output.as_ref().unwrap().metadata().unwrap().len() > 0);
         assert_eq!(report.probe["streams"][0]["codec_name"], "h264");
         assert_eq!(report.probe["streams"][0]["width"], 1920);

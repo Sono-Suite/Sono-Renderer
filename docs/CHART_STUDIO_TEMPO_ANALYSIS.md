@@ -1,5 +1,8 @@
 # Chart Studio tempo analysis
 
+> **Availability:** Chart Studio is hidden from the default desktop navigation.
+> This guide describes retained editor infrastructure.
+
 ## Workflow and ownership
 
 In Chart Studio, choose a local audio source or use the current project's

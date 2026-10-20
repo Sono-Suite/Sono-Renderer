@@ -6,14 +6,19 @@ Chart Studio is a generic LevelData authoring surface. It edits
 pipeline used elsewhere in the application. It does not keep a second chart
 graph or runtime.
 
+> **Availability:** Chart Studio's workflow is not registered in the default
+> desktop interface. This document describes retained implementation for
+> development builds that explicitly register it; the standard app has no
+> user-facing route to open the editor.
+
 ## Create and open
 
-Open **Chart Studio** from the main workspace. **New LevelData** starts with an
-empty `entities` list and no `bgmOffset`; this is a neutral document, not a
-claim that every engine accepts an empty level. **Open LevelData** accepts the
-same standalone JSON/gzip and legacy level package forms as the current loader.
-The editor applies a 128 MiB compressed and decompressed input limit to protect
-the desktop process.
+In a build that registers the workflow, **New LevelData** starts with an empty
+`entities` list and no `bgmOffset`; this is a neutral document, not a claim
+that every engine accepts an empty level. **Open LevelData** accepts the same
+standalone JSON/gzip and legacy level package forms as the current loader. The
+editor applies a 128 MiB compressed and decompressed input limit to protect the
+desktop process.
 
 Choose the engine in **Project / inputs**, then choose **Inspect selected
 engine** in Chart Studio. The palette is populated from the selected package's

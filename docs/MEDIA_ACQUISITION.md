@@ -1,14 +1,14 @@
 # URL media acquisition
 
-The desktop **Project / inputs** panel, **Chart Studio**, and CLI can acquire
-one authorized HTTP(S) media item through the official yt-dlp executable.
+The desktop **Quick Render / Project / inputs** panel and CLI can acquire one
+authorized HTTP(S) media item through the official yt-dlp executable.
 The downloaded result is an ordinary local file assigned to the existing
 project or render input fields; there is no second media library or
 acquisition queue.
 
 ## Desktop workflow
 
-1. Open **Project / inputs** or **Chart Studio**, then expand **Acquire media
+1. In **Quick Render**, open **Project / inputs** and expand **Acquire media
    from URL**.
 2. Paste one HTTP(S) URL and choose **Inspect URL**. The first inspection
    installs the pinned yt-dlp Windows executable into per-user application
@@ -86,15 +86,16 @@ format, and content SHA-256. It does not include the source URL.
 ## Current renderer boundaries
 
 Acquired audio can be selected as render BGM and goes through the existing
-FFmpeg audio preparation path. The Chart Studio acquisition panel assigns the
-audio to that same project Music / BGM input; Chart Studio still edits generic
-LevelData and renders a still Watch frame, with no audio playback, waveform, or
-music timeline. Acquired video can be selected as the existing custom MV
-background and is sampled by the production compositor; its source audio is
-not mixed into the gameplay render. Presentation Studio is a separate local
-media composition workflow; it can import acquired files from disk, but URL
+FFmpeg audio preparation path. Builds that explicitly register Chart Studio
+can assign it to the same project Music / BGM input; that retained editor still
+only edits generic LevelData and renders still Watch frames. It has no audio
+playback, waveform, or music timeline. Acquired video can be selected as the
+existing custom MV background and is sampled by the production compositor; its
+source audio is not mixed into the gameplay render. Presentation Studio is
+separate retained local-media composition infrastructure, hidden from default
+navigation. It can import acquired files from disk when registered, but URL
 acquisition does not itself create a composition, timeline clip, or proxy.
-See [Presentation Studio](PRESENTATION_STUDIO.md).
+See [Presentation Studio](PRESENTATION_STUDIO.md) for that implementation.
 
 ## Troubleshooting
 

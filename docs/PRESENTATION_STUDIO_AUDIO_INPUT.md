@@ -1,5 +1,8 @@
 # Presentation Studio microphone recording
 
+> **Availability:** Presentation Studio is hidden from the default desktop
+> navigation. This guide describes retained editor infrastructure.
+
 ## Current implementation
 
 Presentation Studio owns the microphone controls. It uses CPAL 0.18 for the

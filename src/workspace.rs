@@ -38,6 +38,23 @@ impl Default for WorkflowId {
 }
 
 impl WorkflowId {
+    /// Whether this workflow is registered in Sono-Renderer's default UI.
+    /// Retained feature routes remain valid values so existing preferences,
+    /// internal callers, and future alternate interfaces keep their IDs.
+    pub const fn is_in_default_ui(self) -> bool {
+        !matches!(self, Self::ChartStudio | Self::PresentationStudio)
+    }
+
+    /// Resolve a saved or requested workflow to the closest default surface.
+    /// This does not change the serialized workflow vocabulary.
+    pub const fn default_ui_fallback(self) -> Self {
+        if self.is_in_default_ui() {
+            self
+        } else {
+            Self::QuickRender
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Home => "Home",
@@ -728,6 +745,29 @@ const fn command(
     }
 }
 
+/// Commands registered in the default rendering-focused desktop UI.
+///
+/// The full `COMMANDS` registry remains available to internal feature code and
+/// compatibility readers. Chart and composition commands are intentionally
+/// omitted from default menus, search, and shortcut assignment.
+pub fn default_ui_commands() -> impl Iterator<Item = &'static CommandSpec> {
+    COMMANDS.iter().filter(|command| {
+        !matches!(
+            command.id,
+            CommandId::GoChartStudio
+                | CommandId::GoPresentationStudio
+                | CommandId::GoVoiceoverWorkspace
+        ) && !matches!(
+            command.context,
+            CommandContext::Chart
+                | CommandContext::ChartWithMusic
+                | CommandContext::Presentation
+                | CommandContext::PresentationSelection
+                | CommandContext::PresentationAudioSelection
+        )
+    })
+}
+
 pub fn command_by_stable_id(id: &str) -> Option<&'static CommandSpec> {
     COMMANDS.iter().find(|command| command.stable_id == id)
 }
@@ -797,6 +837,16 @@ pub fn search_commands_localized(query: &str, locale: &str) -> Vec<&'static Comm
         .collect();
     matches.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
     matches.into_iter().map(|(_, _, command)| command).collect()
+}
+
+pub fn search_default_ui_commands_localized(
+    query: &str,
+    locale: &str,
+) -> Vec<&'static CommandSpec> {
+    search_commands_localized(query, locale)
+        .into_iter()
+        .filter(|command| default_ui_commands().any(|registered| registered.id == command.id))
+        .collect()
 }
 
 fn normalize(text: &str) -> String {
@@ -1532,6 +1582,51 @@ mod tests {
         assert!(search_commands_localized("workspace.chart_studio", "ja")
             .iter()
             .any(|candidate| candidate.id == CommandId::GoChartStudio));
+    }
+
+    #[test]
+    fn default_ui_registry_hides_editors_and_keeps_their_internal_commands() {
+        let visible = default_ui_commands()
+            .map(|command| command.id)
+            .collect::<Vec<_>>();
+        assert!(!visible.contains(&CommandId::GoChartStudio));
+        assert!(!visible.contains(&CommandId::GoPresentationStudio));
+        assert!(!visible.contains(&CommandId::GoVoiceoverWorkspace));
+        assert!(!visible.contains(&CommandId::OpenComposition));
+        assert!(!visible.contains(&CommandId::AnalyzeTempo));
+        assert!(visible.contains(&CommandId::GoQuickRender));
+        assert!(visible.contains(&CommandId::StartRender));
+
+        assert!(command_by_stable_id("workspace.chart_studio").is_some());
+        assert!(command_by_stable_id("presentation.open").is_some());
+        assert!(search_commands("chart")
+            .iter()
+            .any(|command| command.id == CommandId::GoChartStudio));
+        assert!(!search_default_ui_commands_localized("chart", "en")
+            .iter()
+            .any(|command| command.id == CommandId::GoChartStudio));
+        assert!(!search_default_ui_commands_localized("video", "en")
+            .iter()
+            .any(|command| command.id == CommandId::GoPresentationStudio));
+    }
+
+    #[test]
+    fn dormant_workflow_preferences_fall_back_without_changing_their_ids() {
+        assert!(!WorkflowId::ChartStudio.is_in_default_ui());
+        assert!(!WorkflowId::PresentationStudio.is_in_default_ui());
+        assert!(WorkflowId::QuickRender.is_in_default_ui());
+        assert_eq!(
+            WorkflowId::ChartStudio.default_ui_fallback(),
+            WorkflowId::QuickRender
+        );
+        assert_eq!(
+            WorkflowId::PresentationStudio.default_ui_fallback(),
+            WorkflowId::QuickRender
+        );
+        assert_eq!(
+            WorkflowId::PresentationStudio.label(),
+            "Presentation Studio"
+        );
     }
 
     #[test]

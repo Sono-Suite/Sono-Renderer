@@ -2,6 +2,9 @@
 
 Presentation Studio can import subtitle files or transcribe one selected audio-bearing timeline clip with the optional local `whisper.cpp` CPU runtime. Transcription runs in a background task; it does not initialize Sonolus, Watch, Chart Studio, Sono-GCC, or a cloud service. Audio stays on this device.
 
+> **Availability:** Presentation Studio is hidden from the default desktop
+> navigation. This guide describes retained editor infrastructure.
+
 ## Generate and review
 
 1. Open a Presentation Studio composition and select an audio or video timeline clip that contains audio. A video source with both streams is supported; the editor transcribes only that selected clip's audio stream, never the composition mix.

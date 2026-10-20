@@ -3,8 +3,30 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub const DEFAULT_ENTITY_MEMORY_LENGTH: i32 = 64;
+pub const DEFAULT_ENTITY_DATA_LENGTH: i32 = 32;
+pub const DEFAULT_ENTITY_SHARED_MEMORY_LENGTH: i32 = 32;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchData {
+    #[serde(
+        default = "default_entity_memory_length",
+        rename = "entityMemoryLength",
+        alias = "entity_memory_length"
+    )]
+    pub entity_memory_length: i32,
+    #[serde(
+        default = "default_entity_data_length",
+        rename = "entityDataLength",
+        alias = "entity_data_length"
+    )]
+    pub entity_data_length: i32,
+    #[serde(
+        default = "default_entity_shared_memory_length",
+        rename = "entitySharedMemoryLength",
+        alias = "entity_shared_memory_length"
+    )]
+    pub entity_shared_memory_length: i32,
     #[serde(default)]
     pub archetypes: Vec<WatchArchetype>,
     #[serde(default)]
@@ -23,6 +45,18 @@ pub struct WatchData {
     pub buckets: Vec<Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+fn default_entity_memory_length() -> i32 {
+    DEFAULT_ENTITY_MEMORY_LENGTH
+}
+
+fn default_entity_data_length() -> i32 {
+    DEFAULT_ENTITY_DATA_LENGTH
+}
+
+fn default_entity_shared_memory_length() -> i32 {
+    DEFAULT_ENTITY_SHARED_MEMORY_LENGTH
 }
 
 fn deserialize_skin<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Value, D::Error> {
@@ -46,6 +80,76 @@ impl WatchData {
         &self,
     ) -> Result<crate::skin_render_mode::SkinRenderModePreference, serde_json::Error> {
         parse_skin_render_mode(&self.skin)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_memory_lengths_default_parse_and_preserve_unknown_fields() {
+        let legacy: WatchData = serde_json::from_value(serde_json::json!({
+            "archetypes": [], "nodes": []
+        }))
+        .unwrap();
+        assert_eq!(legacy.entity_memory_length, 64);
+        assert_eq!(legacy.entity_data_length, 32);
+        assert_eq!(legacy.entity_shared_memory_length, 32);
+
+        let explicit: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 64,
+            "entityDataLength": 32,
+            "entitySharedMemoryLength": 32,
+            "futureWatchField": {"version": 2},
+            "nodes": []
+        }))
+        .unwrap();
+        assert_eq!(explicit.entity_memory_length, legacy.entity_memory_length);
+        assert_eq!(explicit.entity_data_length, legacy.entity_data_length);
+        assert_eq!(
+            explicit.entity_shared_memory_length,
+            legacy.entity_shared_memory_length
+        );
+        assert_eq!(
+            explicit.extra.get("futureWatchField"),
+            Some(&serde_json::json!({"version": 2}))
+        );
+        let serialized = serde_json::to_value(explicit).unwrap();
+        assert_eq!(serialized["entityMemoryLength"], 64);
+        assert_eq!(serialized["entityDataLength"], 32);
+        assert_eq!(serialized["entitySharedMemoryLength"], 32);
+        assert!(serialized.get("entity_memory_length").is_none());
+    }
+
+    #[test]
+    fn entity_memory_lengths_accept_zero_and_reject_malformed_or_out_of_i32_values() {
+        let zero: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 0,
+            "entityDataLength": 0,
+            "entitySharedMemoryLength": 0
+        }))
+        .unwrap();
+        assert_eq!(zero.entity_memory_length, 0);
+        assert_eq!(zero.entity_data_length, 0);
+        assert_eq!(zero.entity_shared_memory_length, 0);
+
+        for value in [
+            serde_json::json!({"entityDataLength": "32"}),
+            serde_json::json!({"entitySharedMemoryLength": 1.5}),
+            serde_json::json!({"entityDataLength": 2147483648_i64}),
+        ] {
+            assert!(serde_json::from_value::<WatchData>(value).is_err());
+        }
+        let negative: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": -1
+        }))
+        .unwrap();
+        assert!(crate::watch_runtime::WatchRuntime::new(
+            &negative,
+            &serde_json::from_value(serde_json::json!({"entities":[]})).unwrap()
+        )
+        .is_err());
     }
 }
 /// A compiled Sonolus node. `func` is deliberately an open string: engines may

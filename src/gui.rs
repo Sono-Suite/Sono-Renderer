@@ -2086,10 +2086,9 @@ impl Default for Desktop {
             crate::workspace::WorkflowId::Home
         } else {
             workspace_preferences.workflow
-        };
-        if welcome_visible {
-            workspace_preferences.workflow = crate::workspace::WorkflowId::Home;
         }
+        .default_ui_fallback();
+        workspace_preferences.workflow = workflow;
         let (tab, quick_render_active) = match workflow {
             crate::workspace::WorkflowId::Home => (0, false),
             crate::workspace::WorkflowId::QuickRender => (0, true),
@@ -2800,9 +2799,10 @@ impl Desktop {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("sonocomp"))
         {
-            let path = files[0].clone();
-            self.navigate_workflow(crate::workspace::WorkflowId::PresentationStudio);
-            self.presentation_load_project(path);
+            self.summary =
+                "Video composition projects are not available in the default render workflow."
+                    .into();
+            self.error = true;
             return;
         }
         if files.len() == 1 && crate::project::RenderProject::load(&files[0]).is_ok() {
@@ -3702,6 +3702,8 @@ impl Desktop {
         let has_event_file = self.config.ui.events_file.is_some();
         let mut remove_rule = None;
         ui.collapsing("Gameplay scoring", |ui| {
+            ui.checkbox(&mut self.config.ui.animate_score_count, "Animate main score count")
+                .on_hover_text("Optional cubic count-up over 30 output frames. Changes displayed score digits only; scoring, rank and award popups are unchanged.");
             ui.label("Chart simulation is a deterministic Sono-Overlay all-perfect forecast, not recorded player performance. Verified non-scoring entities are ignored; unknown beat-bearing archetypes are skipped with a best-effort warning while recognized notes continue. Use an authoritative event track for actual judgments and life changes.");
             if self.config.ui.scoring.is_none() {
                 match self.config.ui.resolved_scoring_source() {
@@ -7172,7 +7174,7 @@ impl Desktop {
         modifiers: egui::Modifiers,
     ) -> Option<crate::workspace::CommandId> {
         let key_name = format!("{key:?}");
-        crate::workspace::COMMANDS.iter().find_map(|command| {
+        crate::workspace::default_ui_commands().find_map(|command| {
             let matches = self
                 .workspace_preferences
                 .bindings_for(command)
@@ -7299,8 +7301,6 @@ impl Desktop {
             for (key, command) in [
                 ("nav.home", Id::GoHome),
                 ("nav.quick_render", Id::GoQuickRender),
-                ("nav.chart_studio", Id::GoChartStudio),
-                ("nav.presentation_studio", Id::GoPresentationStudio),
                 ("nav.production", Id::GoProduction),
             ] {
                 let label = crate::workspace::COMMANDS
@@ -7377,7 +7377,6 @@ impl Desktop {
                 ui.separator();
                 ui.menu_button("Open a tool", |ui| {
                     for (label, command) in [
-                        ("Tempo Analysis (Chart Studio)", Id::GoChartStudio),
                         ("Program Preview", Id::GoProgramPreview),
                         ("Compatibility", Id::GoCompatibility),
                         ("Cache Manager", Id::GoCacheManager),
@@ -7422,11 +7421,6 @@ impl Desktop {
             ui.menu_button("File", |ui| match workflow {
                 Workflow::Home => {
                     self.command_menu_item(ui, Id::OpenRenderProject);
-                    if ui.button("Open Video Composition…").clicked() {
-                        self.dispatch_command(Id::GoPresentationStudio, ui.ctx());
-                        self.dispatch_command(Id::OpenComposition, ui.ctx());
-                        ui.close();
-                    }
                 }
                 Workflow::QuickRender => {
                     self.command_menu_item(ui, Id::OpenRenderProject);
@@ -7450,11 +7444,6 @@ impl Desktop {
                 }
                 _ => {
                     self.command_menu_item(ui, Id::OpenRenderProject);
-                    if ui.button("Open Video Composition…").clicked() {
-                        self.dispatch_command(Id::GoPresentationStudio, ui.ctx());
-                        self.dispatch_command(Id::OpenComposition, ui.ctx());
-                        ui.close();
-                    }
                 }
             });
             if workflow == Workflow::PresentationStudio {
@@ -7570,7 +7559,7 @@ impl Desktop {
                     if self.command_palette_focus { response.request_focus(); self.command_palette_focus = false; }
                     if ui.small_button("Clear").clicked() { self.command_palette_query.clear(); }
                 });
-                let results = crate::workspace::search_commands_localized(
+                let results = crate::workspace::search_default_ui_commands_localized(
                     &self.command_palette_query,
                     &locale,
                 );
@@ -7643,7 +7632,7 @@ impl Desktop {
                 ui.separator();
                 let query = self.shortcut_search.trim().to_owned();
                 egui::ScrollArea::vertical().max_height(410.0).show(ui, |ui| {
-                    for command in crate::workspace::search_commands(&query) {
+                    for command in crate::workspace::search_default_ui_commands_localized(&query, "en") {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(command.name);
@@ -15972,8 +15961,6 @@ impl Desktop {
                     ));
                     ui.add_space(5.0);
                     ui.heading(self.app_text("home.question"));
-                    ui.add_space(5.0);
-                    ui.label(self.app_text("home.intro"));
                 });
                 ui.add_space(18.0);
                 ui.columns(2, |columns| {
@@ -15985,39 +15972,15 @@ impl Desktop {
                         }
                     });
                     columns[1].group(|ui| {
-                        ui.heading(self.app_text("home.chart.title"));
-                        ui.label(self.app_text("home.chart.body"));
-                        if ui.button(self.app_text("home.chart.action")).clicked() {
-                            self.dispatch_command(crate::workspace::CommandId::GoChartStudio, ui.ctx());
-                        }
-                    });
-                });
-                ui.add_space(8.0);
-                ui.columns(2, |columns| {
-                    columns[0].group(|ui| {
-                        ui.heading(self.app_text("home.video.title"));
-                        ui.label(self.app_text("home.video.body"));
-                        if ui.button(self.app_text("home.video.action")).clicked() {
-                            self.dispatch_command(crate::workspace::CommandId::GoPresentationStudio, ui.ctx());
-                        }
-                    });
-                    columns[1].group(|ui| {
                         ui.heading(self.app_text("home.project.title"));
-                        ui.label(self.app_text("home.project.body"));
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button(self.app_text("home.project.render")).clicked() {
-                                self.dispatch_command(crate::workspace::CommandId::OpenRenderProject, ui.ctx());
-                            }
-                            if ui.button(self.app_text("home.project.video")).clicked() {
-                                self.dispatch_command(crate::workspace::CommandId::GoPresentationStudio, ui.ctx());
-                                self.dispatch_command(crate::workspace::CommandId::OpenComposition, ui.ctx());
-                            }
-                        });
+                        if ui.button(self.app_text("home.project.render")).clicked() {
+                            self.dispatch_command(crate::workspace::CommandId::OpenRenderProject, ui.ctx());
+                        }
                         ui.separator();
                         ui.strong("Recent render projects");
                         let recent_paths = self.project_recents.paths.iter().take(5).cloned().collect::<Vec<_>>();
                         if recent_paths.is_empty() {
-                            ui.weak("No recent render projects yet. Video compositions can be opened from Presentation Studio.");
+                            ui.weak("No recent render projects yet.");
                         } else {
                             for path in recent_paths {
                                 let label = path.file_name().and_then(|name| name.to_str()).unwrap_or("Render project");
@@ -16042,7 +16005,7 @@ impl Desktop {
                             self.navigate_workflow(crate::workspace::WorkflowId::QuickRender);
                         }
                     });
-                    ui.small("Learn also covers vertical Shorts, importing local media, From URL acquisition, recording voiceover, saving projects, and exporting.");
+                    ui.small("Learn also covers input selection, optional URL media acquisition, render settings, project files, and export.");
                 });
                 ui.add_space(12.0);
                 if first_run {
@@ -16053,7 +16016,7 @@ impl Desktop {
                         ui.weak("You can reopen this screen any time from Help → Home / Getting Started.");
                     });
                 } else {
-                    ui.weak("Choose a workflow. You can return here any time from the top navigation.");
+                    ui.weak("Return here any time from the top navigation.");
                 }
                 if ui.ctx().input(|input| !input.raw.hovered_files.is_empty()) {
                     ui.separator();
@@ -16351,18 +16314,12 @@ impl Desktop {
         }
         let topics = [
             ("Render a Level", "In Quick Render, choose an engine ZIP, a level, and its resources. Music is required only while Include music is enabled. Choose an MP4 output, check inputs, then queue the render. Projects and profiles are optional."),
-            ("Create or edit a chart", "Chart Studio opens or creates Sonolus LevelData, supports generic entity editing, can inspect archetypes from a selected engine, previews through the production Watch renderer, validates document structure, and exports gzip LevelData. Engine-specific authoring labels require a matching schema."),
-            ("Edit a Video", "Presentation Studio edits local video, audio, still images, text, effects, and multiple timeline tracks. It is a standalone composition workflow: no Sonolus engine, LevelData, Chart Studio, Watch, or Sono-GCC is required."),
-            ("Make a vertical Short", "In Presentation Studio, start a composition, set its canvas to 1080×1920, place landscape or portrait media, then use transforms/crop, text, effects, audio, and the normal MP4 export. This is the same editor and project format."),
-            ("Import local media", "Presentation Studio can import local video, audio, and still images into its media bin. Dragging media onto a timeline track creates ordinary clips. Local import works without URL tools or Sonolus content."),
-            ("Get media from a URL", "Project / inputs and Chart Studio provide the optional From URL acquisition workflow. Inspect and explicitly download one supported HTTP(S) item; the result becomes a local media file. URL acquisition is not required for local editing or rendering."),
-            ("Record voiceover", "In Presentation Studio, choose an input and use the input meter before recording. Record Voiceover starts timeline playback and captures a lossless WAV take at the playhead; the result is an ordinary audio media source and timeline clip. Capture starts only after the user requests it."),
-            ("Save and reopen projects", "Render projects save reusable engine/level/resource references and render defaults. Presentation Studio saves standalone .sonocomp compositions with media references. These are separate project types; neither requires a profile."),
-            ("Playback and export", "Presentation Studio uses continuous timeline playback for video and mixed audio. Export uses the same composition model and filter graph, supports landscape or vertical dimensions and an optional In/Out range, and validates the completed MP4."),
-            ("Navigation and layouts", "Choose a workflow from the top navigation: Home, Render a Level, Chart Studio, Edit Video, or Jobs & History. Tools, Settings, and Diagnostics are under More. In Presentation Studio, Layout changes panel visibility and timeline scale only; it does not switch the project or workflow. Use the Command Palette to search actions and Keyboard Shortcuts to rebind them."),
+            ("Get media from a URL", "Project / inputs provides optional From URL acquisition. Inspect and explicitly download one supported HTTP(S) item; the result becomes a local media file for the render workflow."),
+            ("Save and reopen projects", "Render projects save reusable engine, level, resource, and output settings. They are optional; Quick Render can also use direct file selections."),
+            ("Navigation and commands", "Use Home and Render a Level for the main render workflow. Jobs & History tracks queued work and completed outputs. More contains Tools, Settings, and Diagnostics. The Command Palette and Keyboard Shortcuts cover commands registered in the default interface."),
             ("Jobs and history", "A render job captures its settings when queued. The queue shows active work; Render History keeps completed and failed render attempts."),
             ("Advanced renderer settings", "Sono VM / Interpreter is the default and compatibility reference. Sono-GCC is an optional native backend for eligible regions; unsupported regions continue through the VM, and no speedup is promised."),
-            ("Gameplay presentation", "Gameplay UI profiles customize the rendered Sonolus HUD. Program Preview renders still frames through the real renderer. These tools affect gameplay presentation, not standalone Presentation Studio projects."),
+            ("Gameplay presentation", "Gameplay UI profiles customize the rendered Sonolus HUD. Program Preview renders still frames through the production renderer."),
             ("Command line", "The direct command form is: renderer render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --start-time 0 --duration 10 --fps 60 --width 1920 --height 1080. Use renderer render-video --help for current options."),
         ];
         let mut open = self.help_open;
@@ -16395,14 +16352,6 @@ impl Desktop {
                 ui.horizontal(|ui| {
                     if ui.button("Render a Level").clicked() {
                         self.dispatch_command(crate::workspace::CommandId::GoQuickRender, ui.ctx());
-                        self.help_open = false;
-                    }
-                    if ui.button("Chart Studio").clicked() {
-                        self.dispatch_command(crate::workspace::CommandId::GoChartStudio, ui.ctx());
-                        self.help_open = false;
-                    }
-                    if ui.button("Presentation Studio").clicked() {
-                        self.dispatch_command(crate::workspace::CommandId::GoPresentationStudio, ui.ctx());
                         self.help_open = false;
                     }
                     if ui.button("From URL").clicked() {
@@ -18884,7 +18833,7 @@ mod tests {
     }
 
     #[test]
-    fn dropped_composition_opens_from_first_run_without_sonolus_inputs() {
+    fn dropped_composition_stays_out_of_the_default_render_ui() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("standalone.sonocomp");
         crate::composition::CompositionProject::new()
@@ -18894,13 +18843,16 @@ mod tests {
 
         app.process_dropped_files(vec![path.clone()]);
 
-        assert!(!app.welcome_visible);
-        assert_eq!(app.tab, 15);
+        assert!(app.welcome_visible);
         assert_eq!(
-            app.presentation_studio.project_path.as_deref(),
-            Some(path.as_path())
+            app.workspace_preferences.workflow,
+            crate::workspace::WorkflowId::Home
         );
+        assert!(app.presentation_studio.project_path.is_none());
         assert!(app.presentation_studio.project.sources.is_empty());
+        assert!(app
+            .summary
+            .contains("not available in the default render workflow"));
     }
 
     #[test]

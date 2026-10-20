@@ -2699,6 +2699,26 @@ mod tests {
     }
 
     #[test]
+    fn watch_memory_operations_stay_on_the_shared_vm_path_for_sono_gcc() {
+        for name in [
+            "Get",
+            "GetPointed",
+            "GetShifted",
+            "Set",
+            "SetPointed",
+            "SetShifted",
+            "SetAdd",
+            "SetAddPointed",
+            "SetAddShifted",
+        ] {
+            assert!(
+                is_vm_cut_function(name),
+                "{name} must use WatchVm memory handling"
+            );
+        }
+    }
+
+    #[test]
     fn native_function_slots_are_unique_and_cover_direct_operations() {
         let names = NATIVE_FUNCTION_NAMES
             .iter()

@@ -202,7 +202,7 @@ struct InputSpec {
     id: String,
     role: String,
     active: bool,
-    path: PathBuf,
+    path: Option<PathBuf>,
 }
 
 impl RenderManifest {
@@ -240,9 +240,9 @@ impl RenderManifest {
                 bail!("render config references more than {MAX_INPUTS} assets");
             }
             let (sha256, size_bytes) = if spec.active {
-                match fs::metadata(&spec.path) {
-                    Ok(metadata) if metadata.is_file() => {
-                        let (hash, size) = stable_file_identity(&spec.path)?;
+                match spec.path.as_deref() {
+                    Some(path) if fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) => {
+                        let (hash, size) = stable_file_identity(path)?;
                         (Some(hash), Some(size))
                     }
                     _ => (None, None),
@@ -254,7 +254,7 @@ impl RenderManifest {
                 id: spec.id,
                 role: spec.role,
                 active: spec.active,
-                path_hint: Some(spec.path),
+                path_hint: spec.path,
                 sha256,
                 size_bytes,
             });
@@ -1219,8 +1219,13 @@ fn input_specs(config: &RenderConfig) -> Vec<InputSpec> {
         ));
     }
     for (key, path) in &config.ui.assets {
-        let resolved_path = config.ui.loaded_asset_path(key).unwrap_or(path.as_path());
-        specs.push(spec(
+        let resolved_path = config.ui.asset_path_for_manifest(key).or_else(|| {
+            let reference = path.to_string_lossy();
+            (!reference.starts_with("pack://")
+                && (path.is_absolute() || is_foreign_absolute_path(path)))
+            .then(|| path.clone())
+        });
+        specs.push(optional_spec(
             &format!("ui.asset:{key}"),
             &format!("Gameplay UI asset {key}"),
             custom_ui_active,
@@ -1243,7 +1248,16 @@ fn spec(id: &str, role: &str, active: bool, path: &Path) -> InputSpec {
         id: id.into(),
         role: role.into(),
         active,
-        path: path.to_path_buf(),
+        path: Some(path.to_path_buf()),
+    }
+}
+
+fn optional_spec(id: &str, role: &str, active: bool, path: Option<PathBuf>) -> InputSpec {
+    InputSpec {
+        id: id.into(),
+        role: role.into(),
+        active,
+        path,
     }
 }
 
@@ -1286,6 +1300,10 @@ fn normalize_config_asset_paths(config: &mut Value, inputs: &[ManifestInput]) ->
         };
         set_pointer(config, &pointer, Value::String(replacement));
     }
+    // Asset-root is only a resolver hint. The resolved files and pack
+    // manifest have their own content identities, so a relocated root must
+    // not change portable manifest identity.
+    set_pointer(config, "/ui/asset_root", Value::Null);
     Ok(())
 }
 
@@ -1491,6 +1509,7 @@ mod tests {
         record.config_snapshot.output = Some(root.join("result.mp4"));
         record.config_snapshot.notifications.discord.bot_token_env =
             "A_PRIVATE_TOKEN_MUST_NOT_APPEAR_IN_A_MANIFEST".into();
+        record.config_snapshot.ui = crate::render_ui::RendererUiConfig::default();
         record.config_snapshot.ui.enabled = true;
         record
             .config_snapshot
@@ -1525,6 +1544,138 @@ mod tests {
                 .can_reproduce_exact_backend
         );
         assert!(loaded.save_atomic(&path).is_err());
+    }
+
+    #[test]
+    fn pack_asset_history_resolves_hashes_and_relocates_without_path_identity() {
+        let original = tempdir().unwrap();
+        let original_assets = original.path().join("assets");
+        fs::create_dir_all(&original_assets).unwrap();
+        let asset_bytes = b"presentation image bytes";
+        fs::write(original_assets.join("logo.bin"), asset_bytes).unwrap();
+        let pack_path = original.path().join("presentation-pack.json");
+        let pack = crate::presentation_assets::PresentationAssetPack {
+            id: "manifest-fixture".into(),
+            name: "Manifest fixture".into(),
+            assets: vec![crate::presentation_assets::PresentationAssetEntry {
+                id: "logo".into(),
+                source: "logo.bin".into(),
+                kind: crate::presentation_assets::PresentationAssetKind::Image,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        fs::write(&pack_path, serde_json::to_vec(&pack).unwrap()).unwrap();
+
+        let mut record = history_with_inputs(original.path());
+        record.config_snapshot.ui.enabled = true;
+        record.config_snapshot.ui = crate::render_ui::RendererUiConfig::default();
+        record.config_snapshot.ui.enabled = true;
+        record.config_snapshot.ui.asset_root = Some(original_assets.clone());
+        record.config_snapshot.ui.asset_pack = Some(pack_path.clone());
+        record
+            .config_snapshot
+            .ui
+            .assets
+            .insert("logo".into(), "pack://logo".into());
+        // History persists the durable references but omits the runtime path
+        // cache populated while a render profile is loaded.
+        record.config_snapshot =
+            serde_json::from_value(serde_json::to_value(&record.config_snapshot).unwrap()).unwrap();
+
+        let first = RenderManifest::from_history(&record).unwrap();
+        let asset_input = first
+            .inputs
+            .iter()
+            .find(|input| input.id == "ui.asset:logo")
+            .unwrap();
+        assert_eq!(
+            asset_input.sha256,
+            Some(format!("sha256:{}", sha256_hex(asset_bytes)))
+        );
+        assert_eq!(
+            asset_input.path_hint.as_deref(),
+            Some(
+                original_assets
+                    .join("logo.bin")
+                    .canonicalize()
+                    .unwrap()
+                    .as_path()
+            )
+        );
+        assert_eq!(
+            first.effective_config.ui.assets.get("logo"),
+            Some(&PathBuf::from("pack://logo"))
+        );
+
+        let relocated = tempdir().unwrap();
+        let relocated_assets = relocated.path().join("moved-assets");
+        fs::create_dir_all(&relocated_assets).unwrap();
+        let relocated_logo = relocated_assets.join("logo.bin");
+        fs::copy(original_assets.join("logo.bin"), &relocated_logo).unwrap();
+        let relocated_pack = relocated.path().join("presentation-pack.json");
+        fs::copy(&pack_path, &relocated_pack).unwrap();
+        let mut moved_record = record.clone();
+        moved_record.config_snapshot.ui.asset_pack = Some(relocated_pack.clone());
+        moved_record.config_snapshot.ui.asset_root = Some(relocated_assets);
+        moved_record.output.path = Some(relocated.path().join("output.mp4"));
+        moved_record.config_snapshot.output = moved_record.output.path.clone();
+        let second = RenderManifest::from_history(&moved_record).unwrap();
+        assert_eq!(first.manifest_sha256, second.manifest_sha256);
+
+        let overrides = BTreeMap::from([
+            ("ui.asset-pack".to_owned(), relocated_pack),
+            ("ui.asset:logo".to_owned(), relocated_logo),
+        ]);
+        assert!(
+            first
+                .verify(&overrides)
+                .unwrap()
+                .can_reproduce_exact_backend
+        );
+
+        let mut unresolved_record = record;
+        unresolved_record
+            .config_snapshot
+            .ui
+            .assets
+            .insert("logo".into(), "pack://not-in-pack".into());
+        let unresolved = RenderManifest::from_history(&unresolved_record).unwrap();
+        let unresolved_input = unresolved
+            .inputs
+            .iter()
+            .find(|input| input.id == "ui.asset:logo")
+            .unwrap();
+        assert!(unresolved_input.path_hint.is_none());
+        assert!(unresolved_input.sha256.is_none());
+        assert!(unresolved
+            .verify(&BTreeMap::new())
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.component == "Gameplay UI asset logo"
+                && item.status == VerificationStatus::Missing));
+
+        unresolved_record
+            .config_snapshot
+            .ui
+            .assets
+            .insert("relative".into(), "logo.bin".into());
+        let unresolved = RenderManifest::from_history(&unresolved_record).unwrap();
+        let unresolved_relative = unresolved
+            .inputs
+            .iter()
+            .find(|input| input.id == "ui.asset:relative")
+            .unwrap();
+        assert!(unresolved_relative.path_hint.is_none());
+        assert!(unresolved_relative.sha256.is_none());
+        assert!(unresolved
+            .verify(&BTreeMap::new())
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.component == "Gameplay UI asset relative"
+                && item.status == VerificationStatus::Missing));
     }
 
     #[test]

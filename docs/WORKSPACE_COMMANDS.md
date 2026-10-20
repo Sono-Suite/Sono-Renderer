@@ -1,67 +1,50 @@
 # Workflows, layouts, commands, and shortcuts
 
-Sono-Renderer groups the desktop UI by the user's task. A **workflow** selects
-the active product surface; a **layout** stores panel visibility and timeline
-dimensions inside Presentation Studio. Switching workflows does not change a
-layout, close a document, or replace a project.
+Sono-Renderer's default desktop UI focuses on loading Sonolus render inputs,
+configuring renders, previewing supported output, and exporting video. Chart
+Studio and Presentation Studio implementations remain in the source, but their
+workflow routes and feature commands are omitted from default navigation,
+command search, and shortcut assignment.
 
-## Main navigation
+## Default navigation
 
-The main navigation presents **Home**, **Render a Level**, **Chart Studio**,
-**Edit Video**, and **Jobs & History**. **More** opens **Tools**, **Settings**,
-and **Diagnostics**, plus a contextual tool list, Getting Started, Help, the
-Command Palette, and Keyboard Shortcuts. The File menu changes with the active
-workflow. Opening a different workflow keeps the current render project, chart
-document, and video composition in memory; opening/replacing a document still
-uses that document's existing safety checks.
+The main toolbar presents **Home**, **Render a Level**, and **Jobs & History**.
+**More** opens **Tools**, **Settings**, and **Diagnostics**, plus Getting
+Started, Help, the Command Palette, and Keyboard Shortcuts. The File menu
+exposes render-project operations. A remembered Chart Studio or Presentation
+Studio workflow falls back to Quick Render when the app starts.
 
-| Workflow | Primary UI and ownership |
+| Surface | Primary UI and ownership |
 |---|---|
-| Home | Choose a goal, open a render project or composition, see recent render projects, and open Learn/Help. |
-| Render a Level | Direct engine, LevelData, resources, music, output, input check, and queue submission. Project/profile controls are collapsed. |
-| Chart Studio | LevelData authoring, engine archetypes, audio/tempo analysis, Watch preview, validation, and export. |
-| Presentation Studio | Standalone media bin, source/program views, timeline, inspector, effects, captions, voiceover, and export. Sonolus is optional. |
+| Home | Open Quick Render or a render project, see recent render projects, and open Learn/Help. |
+| Render a Level | Engine, LevelData, resources, music, output, input check, preview support, and queue submission. Project/profile controls are optional. |
 | Jobs & History | Queue state, active jobs, outputs, prior attempts, diagnostics, performance, and Render Again. |
-| Tools | Cache manager, Performance Lab, Regression Lab, compatibility analysis, and Program Preview. Tempo analysis remains in Chart Studio and uses the same analyzer. |
-| Settings | Saved render configuration/profiles, engine options, render defaults, gameplay UI, watermark, and notifications. Project inputs remain in Quick Render. |
-| Diagnostics | Detailed renderer status and logs, separated from ordinary editing and rendering surfaces. |
+| Tools | Cache manager, Performance Lab, Regression Lab, compatibility analysis, and Program Preview. |
+| Settings | Saved render configuration/profiles, engine options, render defaults, gameplay UI, watermark, and notifications. |
+| Diagnostics | Detailed renderer status and logs, separated from the normal rendering surface. |
+| Retained feature routes | Chart Studio and Presentation Studio remain implemented but are not registered in the default UI. Their models, serialization, and rendering/editing helpers are preserved. |
 
-Presentation Studio's **Layout** menu switches the built-in **Editing** and
-**Voiceover** panel arrangements, applies saved panel layouts, changes visible
-panels/timeline zoom/track height, and resets the active layout. It does not
-switch the workflow or document. Legacy Quick Render, Charting, and
-Advanced/Diagnostics layout IDs are still decoded when migrating old settings;
-they are not shown as Presentation Studio layout presets. Floating or
-dockable panels are not implemented by the current eframe UI.
+## Command registry
 
-Recent-project support reuses the existing render-project catalog. It does not
-create a second recent list for video compositions; open a composition through
-Home/File or drop its `.sonocomp` into the window.
-
-## Commands and keyboard shortcuts
-
-The command registry lives in `src/workspace.rs`. Stable command IDs,
+The complete command registry lives in `src/workspace.rs`. Stable command IDs,
 descriptions, categories, keywords, default bindings, and document contexts
-feed the Command Palette, shortcut editor, menu items, and dispatch. Document
-edits still go through the existing Chart Studio or Presentation Studio edit
-and undo paths. Top-level workflows and the production, tools, and settings
-subpages use registered navigation commands. Navigation commands set the
-workflow independently of panel-layout preferences.
+remain available to internal feature code and compatibility readers. A separate
+default UI command iterator filters out chart-authoring and composition editing
+commands from the palette, shortcut editor, and shortcut handling. Re-registering
+an optional feature in a future interface can reuse the existing commands and
+dispatch paths.
 
-Open the **Command Palette** from **More → Command Palette** or press
-**Ctrl+Shift+P** (Command on macOS). Search includes terms such as `split`,
-`bpm`, `subtitle`, `voiceover`, `render`, and `history`. Disabled contextual
-commands show why they cannot run. The **Keyboard Shortcuts** editor uses the
-same registry, supports one user binding per command, checks conflicts, and
-can restore defaults. Redo retains Ctrl+Y as an alternate until the user
-customizes that command. Single-letter shortcuts require a modifier except
-for existing editor-specific shortcuts handled by their established context.
+Open the **Command Palette** from **More / Command Palette** or press
+**Ctrl+Shift+P** (Command on macOS). It searches commands exposed in the default
+UI. The **Keyboard Shortcuts** editor uses that same subset, supports one user
+binding per visible command, checks conflicts against saved bindings, and can
+restore defaults. Hidden feature shortcut records remain readable in the
+existing preferences file but are not activated by the default interface.
 
-The File menu exposes different project operations by workflow. Render
-projects (`.sonoproject`) contain render inputs and defaults; compositions
-(`.sonocomp`) contain standalone NLE state. Opening/acquiring media invokes
-the registered project/media commands, and composition editing continues to
-use the established document command and undo behavior.
+The default File menu opens and saves render projects (`.sonoproject`). The
+composition format (`.sonocomp`), Chart Studio LevelData model, editing commands,
+and serialization paths remain in source. Composition drops do not route into
+the hidden editor from the default interface.
 
 ## Settings and persistence
 
@@ -74,11 +57,13 @@ fall back to defaults with an in-app warning; unsupported future schemas are
 reported rather than overwritten silently.
 
 The preference file stores workflow selection, panel/layout state, custom
-layouts, and shortcut overrides. It is UI state, not part of a render profile,
-render project, video composition, or immutable render-job snapshot. The
-settings search jumps to the existing settings page; it does not create a
-second settings model.
+layouts, and shortcut overrides. Its schema and feature identifiers are
+unchanged. Existing project, chart snapshot, and composition data are not
+rewritten by removing the default UI routes. Existing editor routes are mapped
+to Quick Render at application startup; their documents and saved layouts remain
+available to code that registers those features.
 
 The current UI uses distinct routed surfaces within one eframe application
 window. It does not implement floating docks, multiple independent editor
-windows, or a composition recent-project database.
+windows, a layout designer, or a plugin API. Workflow and command registration
+provide a small seam for future interfaces to opt into retained features.

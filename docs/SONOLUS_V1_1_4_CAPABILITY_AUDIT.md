@@ -116,14 +116,14 @@ Authorized local references inspected for corroboration included `sdb-ref`, `son
 
 ## Continuation B specification recheck (2026-10-08)
 
-The public references make some base contracts more precise than the earlier audit wording: `Random` returns within `[min,max]`, `RandomInteger` returns an integer in `[min,max)`, and `StreamSet(id,key,value)` returns `0`. A subsequent pragmatic compatibility closure now implements these contracts with bounded policies in the existing WatchVm. Those operations are classified `Approximate`, not `Unsupported` or fully `Supported`; their generator sequence/state lifecycle, stack pointer/frame ABI, and mutable-stream callback/replay behavior have not been compared with a target client. The corrected valid-arity probes remain unrun in a target client. See [WATCH_SEMANTICS_CLOSURE.md](../WATCH_SEMANTICS_CLOSURE.md) for implementation choices, safeguards, tests, and parity limits.
+The public references make some base contracts more precise than the earlier audit wording: `Random` returns within `[min,max]`, `RandomInteger` returns an integer in `[min,max)`, and `StreamSet(id,key,value)` returns `0`. A subsequent pragmatic compatibility closure now implements these contracts with bounded policies in the existing WatchVm. Those operations are classified `Approximate`, not `Unsupported` or fully `Supported`; their generator sequence/state lifecycle, stack pointer/frame ABI, and mutable-stream callback/replay behavior have not been compared with a target client. The corrected valid-arity probes remain unrun in a target client. See [WATCH_SEMANTICS_CLOSURE.md](reports/closures/WATCH_SEMANTICS_CLOSURE.md) for implementation choices, safeguards, tests, and parity limits.
 
 ### Pragmatic compatibility implementation update (2026-10-08)
 
 The earlier #48 and Continuation B tables above record the state of the
 implementation at those checkpoints. The current WatchVm now executes all 14
 stack operations, `Random`, `RandomInteger`, and `StreamSet` using the bounded
-policies documented in `WATCH_SEMANTICS_CLOSURE.md`. This closes their
+policies documented in `reports/closures/WATCH_SEMANTICS_CLOSURE.md`. This closes their
 previously absent local dispatch paths. It does not close the client-oracle
 questions: stack layout/lifetime edges, the official random sequence and seed
 lifecycle, and mutable stream visibility/reset semantics remain

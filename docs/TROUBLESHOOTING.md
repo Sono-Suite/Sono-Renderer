@@ -93,6 +93,7 @@ release package supports Windows x86_64. Linux and macOS have not been
 packaged or tested.
 
 See [Installation](INSTALLATION.md), [Getting Started](GETTING_STARTED.md),
-[Chart Studio](CHART_STUDIO.md), and
-[Gameplay presentation and preview](PRESENTATION_STUDIO.md) for the supported
-workflows.
+[Current limitations](KNOWN_LIMITATIONS.md), and
+[Compatibility Analyzer](COMPATIBILITY_ANALYZER.md) for the default rendering
+workflow. Chart Studio and Presentation Studio guides describe retained
+implementations that are hidden from the default desktop navigation.

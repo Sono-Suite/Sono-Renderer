@@ -18,6 +18,9 @@ pub(crate) const RUNTIME_PARTICLE_TRANSFORM_BLOCK: i64 = 1003;
 const ENTITY_DATA_ARRAY_BLOCK: i64 = 4101;
 const ENTITY_SHARED_MEMORY_ARRAY_BLOCK: i64 = 4102;
 const ENTITY_INFO_ARRAY_BLOCK: i64 = 4103;
+const LEGACY_ENTITY_DATA_LENGTH: usize = crate::watch::DEFAULT_ENTITY_DATA_LENGTH as usize;
+const LEGACY_ENTITY_SHARED_MEMORY_LENGTH: usize =
+    crate::watch::DEFAULT_ENTITY_SHARED_MEMORY_LENGTH as usize;
 const TEMPORARY_MEMORY_BLOCK: i64 = 10000;
 const TEMPORARY_MEMORY_SLOTS: usize = 4096;
 pub(crate) const MAX_RUNTIME_STREAM_ENTRIES: usize = 1_000_000;
@@ -2324,10 +2327,15 @@ pub struct VmContext {
     pub memory_write_origins: Arc<RwLock<BTreeMap<(Option<usize>, i64, usize), MemoryWriteOrigin>>>,
     /// Immutable Engine Rom values shared cheaply by each callback VM.
     pub engine_rom: Arc<Vec<f64>>,
-    /// Live, 32-slot rows of entity data indexed by entity ID.
+    /// Live rows of entity data indexed by entity ID. WatchRuntime supplies
+    /// the engine-declared row length; None retains the legacy standalone VM
+    /// behavior for callers without a Watch host.
     pub entity_data_array: Arc<RwLock<Vec<f64>>>,
-    /// Host-shared 32-slot rows for non-spawned level entities.
+    /// Host-shared rows for non-spawned level entities.
     pub entity_shared_memory_array: Arc<RwLock<Vec<f64>>>,
+    pub entity_memory_length: Option<usize>,
+    pub entity_data_length: Option<usize>,
+    pub entity_shared_memory_length: Option<usize>,
     /// Three-value rows: entity index, archetype index, and active flag.
     pub entity_info_array: Arc<RwLock<Vec<f64>>>,
     pub entity_archetype: Option<String>,
@@ -3057,34 +3065,48 @@ impl<'a> WatchVm<'a> {
                 .ok()
                 .and_then(|values| values.get(slot).copied())
                 .unwrap_or(0.0)
-        } else if block == 4001 {
-            if slot >= 32 {
-                return 0.0;
+        } else if block == 4000 {
+            if self
+                .context
+                .entity_memory_length
+                .is_some_and(|length| slot >= length)
+            {
+                0.0
+            } else {
+                self.memory.get(block, slot)
             }
+        } else if block == 4001 {
+            let length = self
+                .context
+                .entity_data_length
+                .unwrap_or(LEGACY_ENTITY_DATA_LENGTH);
             self.context
                 .entity_id
-                .filter(|_| self.context.has_entity_data)
-                .and_then(|id| {
+                .filter(|_| self.context.has_entity_data && slot < length)
+                .and_then(|id| id.checked_mul(length)?.checked_add(slot))
+                .and_then(|index| {
                     self.context
                         .entity_data_array
                         .read()
                         .ok()
-                        .and_then(|values| values.get(id.saturating_mul(32) + slot).copied())
+                        .and_then(|values| values.get(index).copied())
                 })
                 .unwrap_or(0.0)
         } else if block == 4002 {
-            if slot >= 32 {
-                return 0.0;
-            }
+            let length = self
+                .context
+                .entity_shared_memory_length
+                .unwrap_or(LEGACY_ENTITY_SHARED_MEMORY_LENGTH);
             self.context
                 .entity_id
-                .filter(|_| self.context.has_entity_shared_memory)
-                .and_then(|id| {
+                .filter(|_| self.context.has_entity_shared_memory && slot < length)
+                .and_then(|id| id.checked_mul(length)?.checked_add(slot))
+                .and_then(|index| {
                     self.context
                         .entity_shared_memory_array
                         .read()
                         .ok()
-                        .and_then(|values| values.get(id.saturating_mul(32) + slot).copied())
+                        .and_then(|values| values.get(index).copied())
                 })
                 .unwrap_or(0.0)
         } else if block == ENTITY_SHARED_MEMORY_ARRAY_BLOCK {
@@ -3141,8 +3163,8 @@ impl<'a> WatchVm<'a> {
         let target_index_value = pointer_value + offset;
         if writing {
             let target_block = integer(pointed_block_value, "block id")?;
-            let target_index = index_of(target_index_value)?;
-            Ok(Some((target_block, target_index)))
+            Ok(watch_memory_index(target_block, target_index_value)?
+                .map(|target_index| (target_block, target_index)))
         } else {
             let target_block = integer(pointed_block_value, "block id").ok();
             let target_index = index_of(target_index_value).ok();
@@ -3181,6 +3203,14 @@ impl<'a> WatchVm<'a> {
         value: f64,
         node: usize,
     ) -> Result<()> {
+        if block == 4000
+            && self
+                .context
+                .entity_memory_length
+                .is_some_and(|length| slot >= length)
+        {
+            return Ok(());
+        }
         if block == RUNTIME_SKIN_TRANSFORM_BLOCK {
             if !matches!(self.context.lifecycle_stage, Some(0 | 5)) {
                 bail!("Runtime Skin Transform is read-only in this lifecycle stage");
@@ -3287,26 +3317,29 @@ impl<'a> WatchVm<'a> {
             if self.context.lifecycle_stage != Some(0) {
                 bail!("Entity Data is read-only outside preprocessing");
             }
-            if !self.context.has_entity_data {
-                bail!("Entity Data is unavailable for this entity");
+            let length = self
+                .context
+                .entity_data_length
+                .unwrap_or(LEGACY_ENTITY_DATA_LENGTH);
+            if !self.context.has_entity_data || slot >= length {
+                return Ok(());
             }
-            if slot >= 32 {
-                bail!("Entity Data slot {slot} exceeds its 32-value row");
-            }
-            let id = self
+            let Some(index) = self
                 .context
                 .entity_id
-                .context("missing current entity ID")?;
+                .and_then(|id| id.checked_mul(length)?.checked_add(slot))
+            else {
+                return Ok(());
+            };
             let mut values = self
                 .context
                 .entity_data_array
                 .write()
                 .map_err(|_| anyhow::anyhow!("Entity Data Array lock was poisoned"))?;
-            let index = id.saturating_mul(32).saturating_add(slot);
-            if index >= values.len() {
-                bail!("Entity Data row for entity {id} is outside the array");
-            }
-            values[index] = value;
+            let Some(target) = values.get_mut(index) else {
+                return Ok(());
+            };
+            *target = value;
             if self.capture_draw_argument_values {
                 self.last_memory_writes.insert((block, slot), (node, value));
             }
@@ -3316,26 +3349,29 @@ impl<'a> WatchVm<'a> {
             if !matches!(self.context.lifecycle_stage, Some(0 | 5)) {
                 bail!("Entity Shared Memory is read-only in this lifecycle stage");
             }
-            if !self.context.has_entity_shared_memory {
-                bail!("Entity Shared Memory is unavailable for this entity");
+            let length = self
+                .context
+                .entity_shared_memory_length
+                .unwrap_or(LEGACY_ENTITY_SHARED_MEMORY_LENGTH);
+            if !self.context.has_entity_shared_memory || slot >= length {
+                return Ok(());
             }
-            if slot >= 32 {
-                bail!("Entity Shared Memory slot {slot} exceeds its 32-value row");
-            }
-            let id = self
+            let Some(index) = self
                 .context
                 .entity_id
-                .context("missing current entity ID")?;
+                .and_then(|id| id.checked_mul(length)?.checked_add(slot))
+            else {
+                return Ok(());
+            };
             let mut values = self
                 .context
                 .entity_shared_memory_array
                 .write()
                 .map_err(|_| anyhow::anyhow!("Entity Shared Memory Array lock was poisoned"))?;
-            let index = id.saturating_mul(32).saturating_add(slot);
-            if index >= values.len() {
-                bail!("Entity Shared Memory row for entity {id} is outside the array");
-            }
-            values[index] = value;
+            let Some(target) = values.get_mut(index) else {
+                return Ok(());
+            };
+            *target = value;
             if self.capture_draw_argument_values {
                 self.last_memory_writes.insert((block, slot), (node, value));
             }
@@ -4081,9 +4117,9 @@ impl<'a> WatchVm<'a> {
             "Set" | "SetAdd" | "SetSubtract" | "SetMultiply" | "SetDivide" | "SetMod"
             | "SetRem" | "SetPower" => {
                 let block = integer(self.arg(index, 0)?, "block id")?;
-                let slot = index_of(self.arg(index, 1)?)?;
+                let slot = watch_memory_index(block, self.arg(index, 1)?)?;
                 let value = self.arg(index, 2)?;
-                let old = self.memory_get(block, slot);
+                let old = slot.map_or(0.0, |slot| self.memory_get(block, slot));
                 let result = match name {
                     "Set" => value,
                     "SetAdd" => old + value,
@@ -4095,21 +4131,25 @@ impl<'a> WatchVm<'a> {
                     "SetPower" => old.powf(value),
                     _ => unreachable!(),
                 };
-                if self.capture_draw_argument_values {
-                    self.draw_memory_operations.push(MemoryOperationTrace {
-                        node: index,
-                        function: name.to_owned(),
-                        block,
-                        index: slot,
-                        old_value: trace_value(old),
-                        operand: trace_value(value),
-                        result: trace_value(result),
-                    });
+                if let Some(slot) = slot {
+                    if self.capture_draw_argument_values {
+                        self.draw_memory_operations.push(MemoryOperationTrace {
+                            node: index,
+                            function: name.to_owned(),
+                            block,
+                            index: slot,
+                            old_value: trace_value(old),
+                            operand: trace_value(value),
+                            result: trace_value(result),
+                        });
+                    }
+                    self.memory_set(block, slot, result, index)?;
                 }
-                self.memory_set(block, slot, result, index)?;
 
                 self.record_diagnostic(|| {
-                    format!("{name} node={index} block={block} index={slot} old={old} new={result}")
+                    format!(
+                        "{name} node={index} block={block} index={slot:?} old={old} new={result}"
+                    )
                 });
                 Ok(result)
             }
@@ -4120,8 +4160,8 @@ impl<'a> WatchVm<'a> {
                 let y = self.arg(index, 2)?;
                 let stride = self.arg(index, 3)?;
                 let value = self.arg(index, 4)?;
-                let slot = index_of(x + y * stride)?;
-                let old = self.memory_get(block, slot);
+                let slot = watch_memory_index(block, x + y * stride)?;
+                let old = slot.map_or(0.0, |slot| self.memory_get(block, slot));
                 let result = match name {
                     "SetShifted" => value,
                     "SetAddShifted" => old + value,
@@ -4133,9 +4173,11 @@ impl<'a> WatchVm<'a> {
                     "SetPowerShifted" => old.powf(value),
                     _ => unreachable!(),
                 };
-                self.memory_set(block, slot, result, index)?;
+                if let Some(slot) = slot {
+                    self.memory_set(block, slot, result, index)?;
+                }
                 self.record_diagnostic(|| {
-                    format!("{name} node={index} block={block} x={x} y={y} stride={stride} index={slot} old={old} new={result}")
+                    format!("{name} node={index} block={block} x={x} y={y} stride={stride} index={slot:?} old={old} new={result}")
                 });
                 Ok(result)
             }
@@ -4145,11 +4187,9 @@ impl<'a> WatchVm<'a> {
                 if args.len() < 4 {
                     bail!("{name} requires at least four arguments");
                 }
-                let (block, slot) = self
-                    .pointed_location_values(args[0], args[1], args[2], true)?
-                    .context("pointed write did not resolve an address")?;
+                let address = self.pointed_location_values(args[0], args[1], args[2], true)?;
                 let value = args[3];
-                let old = self.memory_get(block, slot);
+                let old = address.map_or(0.0, |(block, slot)| self.memory_get(block, slot));
                 let result = match name {
                     "SetPointed" => value,
                     "SetAddPointed" => old + value,
@@ -4161,9 +4201,11 @@ impl<'a> WatchVm<'a> {
                     "SetPowerPointed" => old.powf(value),
                     _ => unreachable!(),
                 };
-                self.memory_set(block, slot, result, index)?;
+                if let Some((block, slot)) = address {
+                    self.memory_set(block, slot, result, index)?;
+                }
                 self.record_diagnostic(|| {
-                    format!("{name} node={index} target={block}[{slot}] old={old} new={result}")
+                    format!("{name} node={index} target={address:?} old={old} new={result}")
                 });
                 Ok(result)
             }
@@ -4176,28 +4218,27 @@ impl<'a> WatchVm<'a> {
             | "DecrementPrePointed"
             | "DecrementPostPointed" => {
                 let pointed = name.ends_with("Pointed");
-                let (block, slot) = if pointed {
+                let address = if pointed {
                     let args = self.all_args(index)?;
                     if args.len() < 3 {
                         bail!("{name} requires at least three arguments");
                     }
                     self.pointed_location_values(args[0], args[1], args[2], true)?
-                        .context("pointed update did not resolve an address")?
                 } else {
-                    (
-                        integer(self.arg(index, 0)?, "block id")?,
-                        index_of(self.arg(index, 1)?)?,
-                    )
+                    let block = integer(self.arg(index, 0)?, "block id")?;
+                    watch_memory_index(block, self.arg(index, 1)?)?.map(|slot| (block, slot))
                 };
-                let old = self.memory_get(block, slot);
+                let old = address.map_or(0.0, |(block, slot)| self.memory_get(block, slot));
                 let new = if name.starts_with("Increment") {
                     old + 1.0
                 } else {
                     old - 1.0
                 };
-                self.memory_set(block, slot, new, index)?;
+                if let Some((block, slot)) = address {
+                    self.memory_set(block, slot, new, index)?;
+                }
                 self.record_diagnostic(|| {
-                    format!("{name} node={index} block={block} index={slot} old={old} new={new}")
+                    format!("{name} node={index} address={address:?} old={old} new={new}")
                 });
                 // Sonolus names the returned state: Pre returns the value
                 // before the update, Post returns the value after it.
@@ -4211,16 +4252,18 @@ impl<'a> WatchVm<'a> {
                 let x = self.arg(index, 1)?;
                 let y = self.arg(index, 2)?;
                 let stride = self.arg(index, 3)?;
-                let slot = index_of(x + y * stride)?;
-                let old = self.memory_get(block, slot);
+                let slot = watch_memory_index(block, x + y * stride)?;
+                let old = slot.map_or(0.0, |slot| self.memory_get(block, slot));
                 let new = if name.starts_with("Increment") {
                     old + 1.0
                 } else {
                     old - 1.0
                 };
-                self.memory_set(block, slot, new, index)?;
+                if let Some(slot) = slot {
+                    self.memory_set(block, slot, new, index)?;
+                }
                 self.record_diagnostic(|| {
-                    format!("{name} node={index} block={block} x={x} y={y} stride={stride} index={slot} old={old} new={new}")
+                    format!("{name} node={index} block={block} x={x} y={y} stride={stride} index={slot:?} old={old} new={new}")
                 });
                 Ok(if name.contains("Pre") { old } else { new })
             }
@@ -5244,6 +5287,13 @@ fn trace_value(value: f64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn watch_memory_index(block: i64, value: f64) -> Result<Option<usize>> {
+    if matches!(block, 4000..=4002) && value.is_finite() && value < 0.0 {
+        return Ok(None);
+    }
+    index_of(value).map(Some)
 }
 
 fn memory_origin_key(

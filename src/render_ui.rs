@@ -1159,6 +1159,9 @@ pub struct RendererUiConfig {
     pub mode: GameplayUiMode,
     pub enabled: bool,
     pub profile_name: String,
+    /// Opt-in Sono-Overlay count-up for direct score counters only.
+    /// Authoritative score, rank, gauges and award popups remain unchanged.
+    pub animate_score_count: bool,
     /// True only when the user deliberately chose an empty custom HUD.
     /// Unmarked legacy empty defaults recover to the built-in HUD.
     #[serde(default)]
@@ -1378,6 +1381,7 @@ impl RendererUiConfig {
             mode: GameplayUiMode::Custom,
             enabled: true,
             profile_name: seed.profile_name.clone(),
+            animate_score_count: false,
             intentionally_empty: false,
             design_size: seed.design_size,
             fit: seed.fit,
@@ -1415,6 +1419,7 @@ impl Default for RendererUiConfig {
             mode: GameplayUiMode::Custom,
             enabled: false,
             profile_name: "Custom".into(),
+            animate_score_count: false,
             intentionally_empty: false,
             design_size: [1920, 1080],
             fit: UiFitMode::Contain,
@@ -1998,6 +2003,42 @@ impl RendererUiConfig {
     /// Resolved source path for manifesting, diagnostics, and editor asset details.
     pub fn loaded_asset_path(&self, id: &str) -> Option<&Path> {
         self.loaded_asset_paths.get(id).map(PathBuf::as_path)
+    }
+
+    /// Resolve a configured asset without decoding it. History snapshots omit
+    /// the runtime path cache, so manifests use this fallback to recover the
+    /// same local file from the durable pack and asset-root settings.
+    pub(crate) fn asset_path_for_manifest(&self, id: &str) -> Option<PathBuf> {
+        if let Some(path) = self.loaded_asset_path(id) {
+            return Some(path.to_path_buf());
+        }
+        let reference = self.assets.get(id)?;
+        let reference_text = reference.to_string_lossy();
+        if reference_text.starts_with("pack://") {
+            let pack_path = self.resolved_asset_pack_path()?;
+            if !pack_path.is_absolute() {
+                return None;
+            }
+            let pack = crate::presentation_assets::PresentationAssetPack::load(&pack_path).ok()?;
+            let asset_root = match self.asset_root.as_ref() {
+                Some(path) if path.is_absolute() => Some(path.clone()),
+                Some(path) => Some(self.profile_directory.as_ref()?.join(path)),
+                None => None,
+            };
+            return pack
+                .resolve_reference_with_root(
+                    &pack_path,
+                    &reference_text,
+                    None,
+                    asset_root.as_deref(),
+                )
+                .ok();
+        }
+        if reference.is_absolute() {
+            Some(reference.clone())
+        } else {
+            Some(self.profile_directory.as_ref()?.join(reference))
+        }
     }
 
     pub fn resolved_asset_pack_path(&self) -> Option<PathBuf> {
@@ -2756,12 +2797,30 @@ impl RendererUiConfig {
         if !time.is_finite() || time < 0.0 {
             bail!("gameplay state time must be finite and nonnegative");
         }
+        let mut count_origin = None;
         let mut state = match self.resolved_scoring_source() {
             UiScoringSource::Disabled => None,
-            UiScoringSource::SonoOverlay => self
-                .loaded_forecast
-                .as_ref()
-                .and_then(|forecast| Self::gameplay_state_from_forecast(forecast, time)),
+            UiScoringSource::SonoOverlay => {
+                if self.animate_score_count {
+                    if let Some(forecast) = &self.loaded_forecast {
+                        if let Some(current) = forecast.state_at(time) {
+                            // Lua @Data selects the last row at the active time,
+                            // then the last row at a strictly earlier time.
+                            let prior = forecast
+                                .frames
+                                .partition_point(|row| row.time < current.time);
+                            let previous = prior
+                                .checked_sub(1)
+                                .map(|index| forecast.frames[index].score)
+                                .unwrap_or(0.0);
+                            count_origin = Some((current.time, previous));
+                        }
+                    }
+                }
+                self.loaded_forecast
+                    .as_ref()
+                    .and_then(|forecast| Self::gameplay_state_from_forecast(forecast, time))
+            }
             UiScoringSource::EventTrack => {
                 let (Some(scoring), Some(_events_path)) = (&self.scoring, &self.events_file) else {
                     return Ok(None);
@@ -2772,7 +2831,13 @@ impl RendererUiConfig {
                     .iter()
                     .take_while(|event| event.time <= time)
                 {
-                    state.apply(scoring, event)?;
+                    let previous = state.score;
+                    if state.apply(scoring, event)?
+                        && self.animate_score_count
+                        && count_origin.is_none_or(|(event_time, _)| event_time != event.time)
+                    {
+                        count_origin = Some((event.time, previous));
+                    }
                 }
                 Some(state)
             }
@@ -2780,6 +2845,14 @@ impl RendererUiConfig {
         };
         if let Some(state) = &mut state {
             apply_note_hud_animations(state, time, frame_rate);
+            if self.animate_score_count {
+                let value = count_origin
+                    .map(|(event_time, previous)| {
+                        animated_score_count(previous, state.score, time - event_time, frame_rate)
+                    })
+                    .unwrap_or(state.score);
+                state.variables.insert("display_score_count".into(), value);
+            }
         }
         Ok(state)
     }
@@ -4507,7 +4580,7 @@ fn render_element_unfiltered(
             font,
             align,
         } => {
-            let text = evaluate_expression(value, config, state)
+            let text = evaluate_counter_expression(value, config, state)
                 .map(|value| {
                     format!(
                         "{prefix}{}{suffix}",
@@ -5140,6 +5213,59 @@ fn template_value(key: &str, config: &RendererUiConfig, state: &UiFrameState) ->
         }
     };
     evaluate_expression(&UiExpression::Source { source }, config, state).map(format_value)
+}
+
+// sekai-en.obj @Score: current - (current - previous) * (1 - min(1, frames/30))^3.
+// Duration is 30 OUTPUT frames, independent of the popup's score_speed.
+fn animated_score_count(previous: f64, current: f64, age: f64, frame_rate: f64) -> f64 {
+    // Resets/decreases take effect immediately; never interpolate an old score
+    // into a reset. Only increasing displayed scores are animated.
+    if current <= previous {
+        return current;
+    }
+    let fps = if frame_rate.is_finite() && frame_rate > 0.0 {
+        frame_rate
+    } else {
+        30.0
+    };
+    let frames = age * fps;
+    let nearest_frame = frames.round();
+    let frames = if (frames - nearest_frame).abs() <= 1.0e-9 {
+        nearest_frame
+    } else {
+        frames
+    };
+    let progress = (frames / 30.0).clamp(0.0, 1.0);
+    if progress >= 1.0 {
+        return current;
+    }
+    let value = current - (current - previous) * (1.0 - progress).powi(3);
+    // Lua string.format("%.0f"): round displayed digits, not gameplay state.
+    value.round_ties_even().clamp(previous, current)
+}
+
+fn evaluate_counter_expression(
+    value: &UiExpression,
+    config: &RendererUiConfig,
+    state: &UiFrameState,
+) -> Option<f64> {
+    if config.animate_score_count
+        && matches!(
+            value,
+            UiExpression::Source {
+                source: UiStateSource::Score
+            }
+        )
+    {
+        if let Some(display) = state
+            .gameplay
+            .as_ref()
+            .and_then(|gameplay| gameplay.variables.get("display_score_count"))
+        {
+            return Some(*display);
+        }
+    }
+    evaluate_expression(value, config, state)
 }
 
 fn format_counter(value: f64, digits: usize, max_digits: Option<usize>) -> String {
@@ -6304,6 +6430,210 @@ mod tests {
                 .join(name),
         )
         .unwrap()
+    }
+
+    fn count_test_config() -> RendererUiConfig {
+        let mut config = RendererUiConfig::reference_default();
+        config.scoring = Some(UiScoringConfig {
+            rules: vec![
+                UiScoreRule {
+                    event: "hit".into(),
+                    score: 200.0,
+                    combo: UiComboChange::Increment,
+                    judgement: "PERFECT".into(),
+                    ..UiScoreRule::default()
+                },
+                UiScoreRule {
+                    event: "reset".into(),
+                    score: -800.0,
+                    combo: UiComboChange::Reset,
+                    ..UiScoreRule::default()
+                },
+            ],
+            ..UiScoringConfig::default()
+        });
+        config.events_file = Some("test-events.json".into());
+        config.loaded_events = [1.0, 1.1, 1.1, 1.2]
+            .into_iter()
+            .map(|time| UiGameplayEvent {
+                time,
+                event: "hit".into(),
+                ..UiGameplayEvent::default()
+            })
+            .collect();
+        config
+    }
+
+    #[test]
+    fn optional_score_count_source_formula_and_output_frame_duration() {
+        for fps in [30.0, 60.0] {
+            // Independent substitution into Lua's cubic: 0, 200*(1-(1/2)^3), 200.
+            assert_eq!(animated_score_count(0.0, 200.0, 0.0, fps), 0.0);
+            assert_eq!(animated_score_count(0.0, 200.0, 15.0 / fps, fps), 175.0);
+            assert_eq!(animated_score_count(0.0, 200.0, 30.0 / fps, fps), 200.0);
+            assert_eq!(animated_score_count(0.0, 200.25, 31.0 / fps, fps), 200.25);
+            assert_eq!(animated_score_count(200.0, 0.0, 2.0 / fps, fps), 0.0);
+            let values: Vec<_> = (0..=31)
+                .map(|age| animated_score_count(0.0, 200.0, f64::from(age) / fps, fps))
+                .collect();
+            assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+            assert!(values.iter().all(|value| (0.0..=200.0).contains(value)));
+        }
+    }
+
+    #[test]
+    fn optional_score_count_events_ties_resets_and_seeking_preserve_gameplay() {
+        let normal = count_test_config();
+        let mut animated = normal.clone();
+        animated.animate_score_count = true;
+        for fps in [30.0, 60.0] {
+            for time in [0.0, 1.0, 1.05, 1.1, 1.15, 1.2, 1.3, 2.5, 1.05, 0.0, 1.3] {
+                let original = normal
+                    .gameplay_state_at_with_frame_rate(time, fps)
+                    .unwrap()
+                    .unwrap();
+                let mut enhanced = animated
+                    .gameplay_state_at_with_frame_rate(time, fps)
+                    .unwrap()
+                    .unwrap();
+                let display = enhanced.variables.remove("display_score_count").unwrap();
+                // Exact score, combo, life, rank, popup variables, judgment and
+                // all existing animation variables are byte-for-byte untouched.
+                assert_eq!(original, enhanced);
+                assert!(display <= original.score);
+                let repeated = animated
+                    .gameplay_state_at_with_frame_rate(time, fps)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(repeated.variables["display_score_count"], display);
+            }
+            let at = |time| {
+                animated
+                    .gameplay_state_at_with_frame_rate(time, fps)
+                    .unwrap()
+                    .unwrap()
+                    .variables["display_score_count"]
+            };
+            assert_eq!(at(1.0), 0.0);
+            assert!(at(1.05) > 0.0 && at(1.05) < 200.0);
+            assert_eq!(at(1.1), 200.0); // both simultaneous awards restart from 200, not 400
+            assert_eq!(at(1.2), 600.0);
+            assert_eq!(at(2.5), 800.0);
+        }
+        animated.loaded_events.push(UiGameplayEvent {
+            time: 3.0,
+            event: "reset".into(),
+            ..UiGameplayEvent::default()
+        });
+        assert_eq!(
+            animated.gameplay_state_at(3.0).unwrap().unwrap().variables["display_score_count"],
+            0.0
+        );
+    }
+
+    #[test]
+    fn optional_score_count_automatic_forecast_uses_previous_distinct_timestamp() {
+        let note = || crate::formats::LevelEntity {
+            archetype: serde_json::Value::String("NormalTapNote".into()),
+            data: serde_json::json!([{ "name": "#BEAT", "value": 2.0 }]),
+            extra: Default::default(),
+        };
+        let level = crate::formats::LevelData {
+            bgm_offset: Some(0.0),
+            entities: vec![
+                crate::formats::LevelEntity {
+                    archetype: serde_json::Value::String("#BPM_CHANGE".into()),
+                    data: serde_json::json!([
+                        { "name": "#BEAT", "value": 0.0 },
+                        { "name": "#BPM", "value": 120.0 }
+                    ]),
+                    extra: Default::default(),
+                },
+                note(),
+                note(),
+                note(),
+            ],
+            metadata: None,
+            extra: Default::default(),
+        };
+        let mut config = RendererUiConfig::reference_default();
+        config.animate_score_count = true;
+        config.prepare_scoring_for_level(&level);
+        assert_eq!(config.gameplay_state_at(1.0).unwrap().unwrap().combo, 0);
+        for fps in [30.0, 60.0] {
+            let middle = config
+                .gameplay_state_at_with_frame_rate(1.0 + 15.0 / fps, fps)
+                .unwrap()
+                .unwrap();
+            assert_eq!(middle.combo, 3);
+            let expected = (middle.score * 0.875).round_ties_even().min(middle.score);
+            assert_eq!(middle.variables["display_score_count"], expected);
+            let final_state = config
+                .gameplay_state_at_with_frame_rate(1.0 + 31.0 / fps, fps)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                final_state.variables["display_score_count"],
+                final_state.score
+            );
+            let again = config
+                .gameplay_state_at_with_frame_rate(1.0 + 15.0 / fps, fps)
+                .unwrap()
+                .unwrap();
+            assert_eq!(again, middle);
+        }
+    }
+
+    #[test]
+    fn optional_score_count_profile_round_trip_and_default_pixels() {
+        let mut default = RendererUiConfig::reference_default();
+        assert!(!default.animate_score_count);
+        default.prepare_external_data().unwrap();
+        let mut old_json = serde_json::to_value(&default).unwrap();
+        old_json
+            .as_object_mut()
+            .unwrap()
+            .remove("animate_score_count");
+        let mut old: RendererUiConfig = serde_json::from_value(old_json).unwrap();
+        assert!(!old.animate_score_count);
+        old.resolve_profile_resources(
+            &crate::store_paths::application_resource_root().join("ui-profiles/default.json"),
+        );
+        old.prepare_external_data().unwrap();
+        let state = UiFrameState {
+            time: 1.05,
+            frame_rate: 60.0,
+            gameplay: count_test_config().gameplay_state_at(1.05).unwrap(),
+            ..UiFrameState::default()
+        };
+        let mut a = vec![0; 1920 * 1080 * 3];
+        let mut b = a.clone();
+        render_gameplay_ui(&mut a, 1920, 1080, &default, &state).unwrap();
+        render_gameplay_ui(&mut b, 1920, 1080, &old, &state).unwrap();
+        assert_eq!(a, b);
+        default.animate_score_count = true;
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("count-up.json");
+        default.save_profile(&path).unwrap();
+        let restored = RendererUiConfig::load_profile(&path).unwrap();
+        assert!(restored.animate_score_count);
+        assert_eq!(restored.elements, default.elements);
+        let mut animated = count_test_config();
+        animated.animate_score_count = true;
+        let enhanced = UiFrameState {
+            gameplay: animated
+                .gameplay_state_at_with_frame_rate(1.05, 60.0)
+                .unwrap(),
+            ..state.clone()
+        };
+        render_gameplay_ui(&mut b, 1920, 1080, &default, &enhanced).unwrap();
+        assert_ne!(a, b, "production main score glyphs must actually change");
+        // Generic Score expressions and rank gauges still read the authoritative value.
+        let expr = UiExpression::Source {
+            source: UiStateSource::Score,
+        };
+        assert_eq!(evaluate_expression(&expr, &default, &enhanced), Some(200.0));
+        assert!(evaluate_counter_expression(&expr, &default, &enhanced).unwrap() < 200.0);
     }
 
     #[test]
@@ -9379,6 +9709,14 @@ mod tests {
 
         assert!(RendererUiConfig::load_profile(&profile).is_err());
         let mut repairable = RendererUiConfig::load_profile_for_repair(&profile).unwrap();
+        assert_eq!(
+            repairable.profile_directory.as_deref(),
+            Some(original_root.as_path())
+        );
+        let durable: serde_json::Value = serde_json::to_value(&repairable).unwrap();
+        assert!(durable.get("profile_directory").is_none());
+        let reopened: RendererUiConfig = serde_json::from_value(durable).unwrap();
+        assert!(reopened.profile_directory.is_none());
         assert_eq!(
             repairable
                 .elements

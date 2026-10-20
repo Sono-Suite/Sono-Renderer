@@ -1,44 +1,55 @@
-# Current limitations (reviewed for Follow-up #48)
+# Current limitations
 
-This list describes the checked-in product after the Follow-up #48
-convergence review. A feature being present in code does not mean every
-device, workflow, or packaged build has been validated. Supporting evidence
-is linked from [the feature audit](../FEATURE_EXISTENCE_AUDIT.md), [the #39
-certification](../RELEASE_CANDIDATE_CERTIFICATION.md), [the #40.5
-stabilization report](../SONO_RENDERER_FOLLOWUP_40_5_STABILIZATION.md), and
-[the #48 convergence report](../SONO_RENDERER_FOLLOWUP_48_CONVERGENCE.md).
-
-The Watch-operation status below was updated by the pragmatic compatibility
-closure on 2026-10-08; older #48 reports preserve the findings from their own
-checkpoints.
+This page describes the checked-in implementation and known validation gaps.
+Historical audits remain available in the [feature audit](reports/follow-ups/FEATURE_EXISTENCE_AUDIT.md),
+[release-candidate certification](reports/audits/RELEASE_CANDIDATE_CERTIFICATION.md), and
+[Follow-up #48 convergence report](reports/follow-ups/SONO_RENDERER_FOLLOWUP_48_CONVERGENCE.md).
+A feature being present in code does not mean that every engine, device,
+workflow, or packaged build has been validated.
 
 ## Renderer and charts
 
-- The generic Watch implementation is incomplete for some Sonolus v1.1.4
-  content. Stack operations, `Random`/`RandomInteger`, and mutable `StreamSet`
-  execute with documented compatibility approximations; their exact
-  official-client pointer/frame ABI, random sequence/state lifecycle, and
-  mutable-stream lifecycle are unverified. Set Watch Compatibility to Strict
-  to reject these operations, or use the default Permissive policy to run
-  them with one warning per family per render job. Replay stream data can be
-  attached through the Watch/offline frame APIs. Curved Draw operations use a
-  tessellated CPU/GPU path, but have not been pixel-compared with a real
-  Sonolus client in both render modes. Check the compatibility report before
-  relying on an unfamiliar engine.
-- Chart Studio has a generic structural/raw editor for supported canonical
-  LevelData and can preserve unknown JSON fields through export/reimport. It
-  is not an engine-specific spatial chart editor and cannot infer gameplay
-  semantics or entity relationships from compiled Watch behavior. Rich
-  authoring requires an optional content-matched declarative schema; no
-  engine-authored rich schema is bundled. Runtime compatibility remains a
-  separate question. The renderer can still be used directly with engine,
-  level, resources, and music without opening Chart Studio.
+- Sono-Renderer renders through `EngineWatchData`; it does not implement the
+  Sonolus client's interactive Play or Preview modes. The desktop **Program
+  Preview** is a still-frame Watch render.
+- The three Watch memory-length fields associated with Sonolus 1.1.5 are
+  implemented: `entityMemoryLength` defaults to 64, `entityDataLength` to 32,
+  and `entitySharedMemoryLength` to 32. This is targeted field support, not
+  full Sonolus 1.1.5 compatibility. The inspected prototype APK's manifest
+  reports 1.1.4; it was described as matching the 1.1.5 preview without a
+  version bump. Out-of-range reads/writes are implemented from static analysis
+  but have not been verified by executing the APK. The renderer also applies
+  its own 256 MiB allocation safeguard, which is not a Sonolus limit.
+- Watch semantics remain incomplete for some engines. Stack operations,
+  `Random`/`RandomInteger`, and mutable `StreamSet` use documented
+  compatibility approximations; their official-client pointer/frame ABI,
+  random sequence/state lifecycle, and mutable-stream lifecycle remain
+  unverified. Set Watch Compatibility to Strict to reject these operations,
+  or use the default Permissive policy to run them with one warning per family
+  per render job. Replay stream data can be attached through the Watch/offline
+  frame APIs. Curved Draw operations use a tessellated CPU/GPU path but have
+  not been pixel-compared with a real Sonolus client in both render modes.
+  Check the compatibility report before relying on an unfamiliar engine.
+- Chart Studio is retained in source but has no route in the default desktop
+  navigation. Its guide describes implementation available to builds that
+  register the workflow. It has a generic structural/raw editor for supported
+  canonical LevelData and can preserve unknown JSON fields through
+  export/reimport. It is not an engine-specific spatial chart editor and
+  cannot infer gameplay semantics or entity relationships from compiled Watch
+  behavior. Rich authoring requires an optional content-matched declarative
+  schema; no engine-authored rich schema is bundled. Runtime compatibility
+  remains a separate question. The renderer can still be used directly with
+  engine, level, resources, and music without opening Chart Studio.
 - Sono-GCC is optional and compiles only eligible regions on supported
   Windows toolchains. It requires `rustc` for native compilation and can fall
   back to the Watch VM. The VM remains the semantic reference. GCC is not
   guaranteed to make a complete render faster.
 
 ## Presentation Studio
+
+Presentation Studio is retained in source but has no route in the default
+desktop navigation. Its detailed guide describes the optional editor
+implementation, not a standard desktop workflow.
 
 - A composition can use rendered gameplay as ordinary video, but it cannot
   embed a live Watch session or bind authoritative Watch state directly.
@@ -101,7 +112,7 @@ checkpoints.
 - The application has no crash-bundle/safe-mode workflow or project file
   association. Uninstall intentionally keeps per-user application data.
 
-See [the feature-existence audit](../FEATURE_EXISTENCE_AUDIT.md),
+See [the feature-existence audit](reports/follow-ups/FEATURE_EXISTENCE_AUDIT.md),
 [installation guidance](INSTALLATION.md), and
-[release-candidate certification](../RELEASE_CANDIDATE_CERTIFICATION.md) for
+[release-candidate certification](reports/audits/RELEASE_CANDIDATE_CERTIFICATION.md) for
 the supporting evidence and current release decision.

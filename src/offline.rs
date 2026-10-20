@@ -1091,6 +1091,12 @@ impl<'a> FrameSession<'a> {
         };
         let timeline = report.timeline.unwrap_or(0.0);
         match self.render.ui.resolved_scoring_source() {
+            crate::render_ui::UiScoringSource::EventTrack if self.render.ui.animate_score_count => {
+                self.ui_gameplay_state = self
+                    .render
+                    .ui
+                    .gameplay_state_at_with_frame_rate(timeline, f64::from(self.stepper.fps))?;
+            }
             crate::render_ui::UiScoringSource::EventTrack => {
                 if let (Some(scoring), Some(gameplay)) =
                     (&self.render.ui.scoring, &mut self.ui_gameplay_state)

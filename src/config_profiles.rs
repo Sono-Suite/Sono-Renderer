@@ -554,6 +554,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn durable_config(config: &RenderConfig) -> RenderConfig {
+        serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap()
+    }
+
+    fn assert_durable_config_eq(left: &RenderConfig, right: &RenderConfig) {
+        assert_eq!(durable_config(left), durable_config(right));
+    }
+
     fn manager(temp: &TempDir) -> ConfigProfileManager {
         ConfigProfileManager::open_at(temp.path().join("profiles.json")).unwrap()
     }
@@ -568,13 +576,17 @@ mod tests {
         let created = manager.create("  Fast Preview  ", config.clone()).unwrap();
         assert!(created.id.starts_with("profile-"));
         assert_eq!(created.name, "Fast Preview");
-        assert_eq!(manager.resolve(&created.id).unwrap(), config);
+        assert_durable_config_eq(&manager.resolve(&created.id).unwrap(), &config);
+        assert!(serde_json::to_value(&created.config)
+            .unwrap()
+            .pointer("/ui/profile_directory")
+            .is_none());
         assert_eq!(manager.select("fast preview").unwrap().id, created.id);
         assert_eq!(manager.active().unwrap().unwrap().id, created.id);
 
         let duplicate = manager.duplicate(&created.id, "Fast Preview Copy").unwrap();
         assert_ne!(duplicate.id, created.id);
-        assert_eq!(duplicate.config, config);
+        assert_durable_config_eq(&duplicate.config, &config);
         let renamed = manager.rename(&duplicate.id, "Draft Preview").unwrap();
         assert_eq!(renamed.name, "Draft Preview");
         let edited = manager
@@ -629,7 +641,7 @@ mod tests {
             .import(&export_path, Some("Imported Preview"))
             .unwrap();
         assert_eq!(imported.name, "Imported Preview");
-        assert_eq!(imported.config, profile.config);
+        assert_durable_config_eq(&imported.config, &profile.config);
         let document: ConfigProfileExport = serde_json::from_str(&exported).unwrap();
         assert_eq!(document.schema_version, PROFILE_SCHEMA_VERSION);
 

@@ -100,20 +100,27 @@ That profile intentionally takes precedence over renderer defaults and remains
 unchanged by this default-HUD update. Run `renderer profile deselect` to return
 the next GUI session to the current renderer defaults.
 
-## Preserved CLI and GUI surface
+## Where settings appear
 
-The existing CLI subcommands remain present: `ffmpeg-info`, `validate-project`,
-`inspect-engine`, `compile-engine`, `inspect-level`, `inspect-resources`,
-`compatibility`, `evaluate-node`, `run-watch`, `render-display-list`,
-`render-video`, and `gui`. `render-config`, `validate-config`, `default-config`,
-`clear-gcc-cache`, and `jobs` are additions. Existing `run-watch` tracing, VM, worker,
-accounting, level-option, dimensions, layer, display-list, and diagnostic
-options are unchanged.
+In the default desktop interface, **Quick Render** owns chart inputs, output
+selection, input checks, and queue submission. **Settings** contains saved
+configuration and profile controls, engine options, render settings, Gameplay
+UI, Watermark, and Notifications. **Jobs & History** manages queued work and
+past attempts; **Tools** contains the compatibility analyzer, Program Preview,
+cache, performance, and regression utilities. Chart Studio and Presentation
+Studio remain in source but are not registered in the default navigation; see
+[workspace navigation](WORKSPACE_COMMANDS.md).
 
-The existing desktop Project / inputs, Engine options, and Render / video tabs
-remain. The Gameplay UI, Watermark, and Notifications tabs, plus config
-load/save controls, and Job manager tab are additions. The UI-profile tab selects a renderer-owned
-profile; it is not an editor for arbitrary profile element trees.
+The configuration-related CLI commands are `default-config`,
+`validate-config`, `render-config`, and `profiles`. Direct `render-video`
+options remain available for one-off renders. The complete current command
+tree and flag sets are shown by `renderer --help` and each command's `--help`.
+Existing `run-watch` tracing, VM, worker, accounting, level-option, dimensions,
+layer, display-list, and diagnostic options remain available.
+
+The UI-profile controls select a renderer-owned profile; they do not provide an
+editor for arbitrary profile element trees. Use the profile JSON format for
+element-level layouts, bindings, fonts, and assets.
 
 ## Current limitations
 

@@ -1,49 +1,29 @@
 # Getting Started
 
-Sono-Renderer brings three workflows into one application. The welcome screen
-starts with the task you want to do; you do not need to configure the advanced
-renderer before using any of them.
+Sono-Renderer's default desktop interface focuses on rendering Sonolus charts.
+The welcome screen takes you to Quick Render, where you load chart inputs,
+configure output, and export video. Program Preview can render still frames
+through the production renderer.
 
-## Choose a workflow
+## Home and first run
 
-The language selector at the top of Home also appears in Settings. Changing
-it updates application-interface text immediately and is saved with workspace
-preferences. This setting does not change chart data, project media, subtitles,
-render configuration, or exported creative content. Initial non-English
-catalog text is machine-drafted and still needs human review; untranslated
-controls may remain in English.
+The language selector at the top of Home also appears in Settings. Changing it
+updates application-interface text immediately and is saved with workspace
+preferences. This setting does not change chart data, project media, render
+configuration, or exported content. Initial non-English catalog text is
+machine-drafted and still needs human review; untranslated controls may remain
+in English.
 
-- **Render a Level** opens Quick Render. Choose an engine, level, resources,
-  optional music, and output, then check inputs and queue the MP4. A render
-  project, profile, Chart Studio, and Presentation Studio are not required.
-- **Create / Edit a Chart** opens Chart Studio. Open a LevelData file or choose
-  **New LevelData**, edit its entities, optionally inspect a selected engine
-  for archetype names, then validate and export `level.json.gz`.
-- **Edit a Video** opens Presentation Studio. Start a composition and import
-  ordinary video, audio, and image files; add text/effects, edit the timeline,
-  record voiceover if an input device is available, and export. This works
-  without Sonolus content, an engine, LevelData, or Chart Studio.
-- **Open a Project** offers the existing render-project picker or the video
-  composition opener. Render projects (`.sonoproject`) store render inputs and
-  defaults. Video compositions (`.sonocomp`) store NLE composition state and
-  media references. They are separate project types.
-- **Learn** opens searchable, offline help for the current workflows,
-  including vertical Shorts, URL media acquisition, and voiceover recording.
+Home provides **Render a Level**, **Open a Project**, and **Learn**. Choose
+**Skip for now** to open Quick Render without completing the render tour. Return
+Home from the top navigation or **More / Home / Getting Started**. Learn opens
+over Home with searchable, offline guidance. Closing the app before making a
+choice leaves first-run state incomplete, so Home returns next time.
 
-The home screen is keyboard-scrollable in a smaller window. Choose **Skip for
-now** to go to Quick Render without completing a tour. Return to Home from the
-top navigation or **More → Home / Getting Started**. Entering a render, chart,
-video, project, or tour workflow dismisses first-run guidance. **Learn** opens
-over the home screen so you can read first and then choose a workflow. Closing
-the application before making a choice leaves first-run state incomplete, so
-the home screen returns next time.
-
-The welcome screen does not initialize Watch, Sono-GCC compilation, a video
-decoder, or microphone capture. Device enumeration and media probing begin
-only after entering the corresponding workflow; microphone capture still
-requires an explicit meter or recording action. There is no timed Welcome
-reappearance rule. Existing users who completed the previous onboarding keep
-that choice through the local preference migration.
+The welcome screen does not initialize Watch or Sono-GCC compilation. There is
+no timed Welcome reappearance rule. Existing users who completed the previous
+onboarding keep that choice through the local preference migration. If a saved
+workspace points to a retained editor route, the app opens Quick Render.
 
 ## Quick Render
 
@@ -57,9 +37,14 @@ that choice through the local preference migration.
 4. Choose **Check inputs**. It checks the inputs/output, looks for the existing
    FFmpeg pair without downloading anything, and runs the shared static
    compatibility analysis.
-5. Review any findings and choose **Queue render**. Follow the job progress;
-   when complete, use **Open Video** or **Open Folder**. Existing output files
-   are not silently overwritten.
+5. Review any findings and choose **Queue render**. Follow job progress; when
+   complete, use **Open Video** or **Open Folder**. Existing output files are
+   not silently overwritten.
+
+The engine loader reads ZIP packages containing `EngineWatchData`. Levels can
+be supplied as standalone JSON, gzip-compressed JSON, or a legacy level ZIP
+package. Resource packages use SCP/ZIP. The renderer consumes Watch data; it
+does not run an interactive Sonolus client session.
 
 The Windows application provisions its pinned FFmpeg pair when export needs it
 and no validated copy is installed. First-time setup then requires network
@@ -68,75 +53,73 @@ access. See [Installation](INSTALLATION.md) for packaged-app details.
 You can drop supported render inputs or a directory into the app. Unique roles
 are filled automatically; ambiguous engine/level/resource matches require an
 explicit choice. Directory discovery is bounded. A dropped `.sonoproject`
-opens the render project, and a dropped `.sonocomp` opens Presentation Studio.
-This build does not register an operating-system file association or accept a
-project path as a bare GUI command-line argument.
+opens the render project. `.sonocomp` files remain part of the retained source
+infrastructure but do not open in the default UI. This build does not register
+an operating-system file association or accept a project path as a bare GUI
+command-line argument.
 
-## Chart Studio
+## Retained chart authoring infrastructure
 
-Chart Studio edits generic Sonolus LevelData. It can create a blank document,
-open standalone JSON/gzip or supported legacy package forms, inspect the
-selected engine's declared archetype names, preview a still frame through the
-production Watch renderer, validate structure, and export gzip LevelData.
-Engine-specific friendly labels/property controls require an exact
-content-matched authoring schema. The editor does not infer gameplay meaning
-from entity names. See [Chart Studio](CHART_STUDIO.md) for the complete model
-and limitations.
+Chart Studio has no route in the default desktop interface. The guide below is
+an implementation reference for builds that register the retained workflow.
 
-## Presentation Studio
+The Chart Studio implementation still edits generic Sonolus LevelData. Its
+document model, authoring schema, preview, validation, and export paths remain
+in source, but its workflow is not registered in the default interface. See
+[Chart Studio](CHART_STUDIO.md) for its model and limitations.
 
-Presentation Studio is a standalone nonlinear video editor using ordinary
-local media. Create a composition, import video/audio/stills into its media
-bin, place clips on multiple tracks, trim/split/move, animate supported
-properties, apply effects/masks/transitions, add titles, mix audio, preview,
-save a `.sonocomp`, and export an MP4. The same composition supports landscape
-and vertical dimensions such as 1080×1920. Microphone voiceover becomes an
-ordinary WAV media source and timeline clip. Engine loading, Watch, LevelData,
-and Sono-GCC are not part of this workflow.
+## Retained video editing infrastructure
 
-URL acquisition is an optional source workflow exposed under **Project / inputs**
-and Chart Studio in the **Acquire media from URL** section. It inspects and
-explicitly downloads one supported HTTP(S) item to a local file. That file can
-then be imported by Presentation Studio; URL tools are not required for local
-media. See
+Presentation Studio has no route in the default desktop interface. Its guide
+and sub-guides describe retained source infrastructure, not an available
+default editing workflow.
+
+Presentation Studio's UI, CompositionProject model, timeline, media, preview,
+audio, and export implementation remain in source. Its workflow and document
+openers are not registered in the default interface. Composition documents use
+the existing `.sonocomp` format; no project or serialization migration is
+performed. See [Presentation Studio](PRESENTATION_STUDIO.md) and
+[Microphone recording](PRESENTATION_STUDIO_AUDIO_INPUT.md) for implementation
+details.
+
+## URL acquisition, projects, and profiles
+
+URL acquisition is available under **Project / inputs**. It inspects and
+explicitly downloads one supported HTTP(S) item to a local file. See
 [URL media acquisition](MEDIA_ACQUISITION.md).
 
-The editor's practical workflow and current boundaries are documented in
-[Presentation Studio](PRESENTATION_STUDIO.md), including [local subtitles and
-caption editing](PRESENTATION_STUDIO_SUBTITLES.md). Voiceover device behavior
-and validation limits are in [Microphone recording](PRESENTATION_STUDIO_AUDIO_INPUT.md).
-
-## Projects and profiles
-
 A render project stores reusable Sonolus input references and project-specific
-render defaults. A profile stores reusable renderer settings. Both are
-optional for direct Quick Render, and each queued job captures its effective
-configuration. Presentation Studio compositions use their own `.sonocomp`
-format and do not require a render project or profile.
+render defaults. A profile stores reusable renderer settings. Both are optional
+for direct Quick Render, and each queued job captures its effective
+configuration. Existing `.sonocomp` documents and composition services remain
+in source for future UI registration. The Welcome screen's **Recent projects**
+list only shows render projects.
 
-The render-project **Recent projects** list is reused on the Welcome screen.
-It does not currently include a separate recent-composition catalog; open a
-video composition from Presentation Studio or drop its `.sonocomp` file into
-the application.
+## Compatibility scope
 
-## Help and replay
+The renderer targets Sonolus Watch-mode chart rendering. **Program Preview**
+renders still frames through that same path; it is not Sonolus Preview mode.
+The three Sonolus 1.1.5 Watch memory-length fields are implemented with legacy
+defaults, but this does not establish full 1.1.5 or engine-wide compatibility.
+Some Watch operations remain approximate, and the new fields' out-of-range
+behavior is inferred from static prototype analysis rather than confirmed by
+running the Sonolus APK. See [Compatibility Analyzer](COMPATIBILITY_ANALYZER.md)
+and [Current limitations](KNOWN_LIMITATIONS.md) before relying on unfamiliar
+content.
 
-Use **More → Help and workflows** for searchable guidance and direct links to
-Quick Render, Chart Studio, Presentation Studio, URL acquisition, and the
-optional renderer workflow tour. **Replay Getting Started** deliberately
-reopens first-run guidance. **More → Home / Getting Started** returns to the
-goal-based home without resetting completion state.
+## Help and other application areas
 
-## Other application areas
+Use **More / Help and workflows** for searchable guidance and direct links to
+Quick Render, URL acquisition, and the optional renderer workflow tour.
+**Replay Getting Started** deliberately reopens first-run guidance.
 
-The top navigation keeps the common tasks visible: Home, Render a Level,
-Chart Studio, Edit Video, and Jobs & History. **More** contains Tools, Settings,
-and Diagnostics. Tools includes cache management, performance and regression
-tools, compatibility analysis, and Program Preview. Settings contains saved
-configuration/profiles, render defaults, gameplay UI, watermark, and
-notifications. Diagnostics holds detailed runtime status and logs. The
-Presentation Studio **Layout** menu changes panel visibility and timeline
-scale; it does not change the active workflow or project. See
+The top navigation keeps Home, Render a Level, and Jobs & History visible.
+**More** contains Tools, Settings, and Diagnostics. Tools includes cache
+management, performance and regression tools, compatibility analysis, and
+Program Preview. Settings contains saved configuration/profiles, render
+defaults, gameplay UI, watermark, and notifications. Diagnostics holds
+renderer status and logs. Chart Studio and Presentation Studio routes remain
+in source but are omitted from default navigation and action registration. See
 [workflows, layouts, commands, and shortcuts](WORKSPACE_COMMANDS.md).
 
 ## CLI

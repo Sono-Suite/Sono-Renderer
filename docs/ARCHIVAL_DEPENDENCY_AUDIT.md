@@ -271,7 +271,7 @@ possible external project/profile validation is made.
 | File | Change |
 | --- | --- |
 | `README.md` | Links to optional archival scope and this audit. |
-| `REFERENCE_SOURCES.md` | Explicit archival policy for the three exact paths; independent fixture requirements retained. |
+| `docs/reference/REFERENCE_SOURCES.md` | Explicit archival policy for the three exact paths; independent fixture requirements retained. |
 | `docs/PARTICLE_COMPATIBILITY_HANDOFF.md` | Marks the inspection evidence link as archival without rewriting historical findings. |
 | `docs/PRE_UI_STORAGE_AUDIT.md` | Marks earlier storage/retention figures as historical. |
 | `docs/ARCHIVAL_DEPENDENCY_AUDIT.md` | Dependency findings, recovered/resumed validation, baseline failures and limitations. |

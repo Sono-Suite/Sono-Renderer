@@ -677,6 +677,10 @@ pub fn default_store_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    fn durable_config(config: &RenderConfig) -> RenderConfig {
+        serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap()
+    }
+
     fn record(id: &str) -> RenderHistoryRecord {
         RenderHistoryRecord {
             id: id.into(),
@@ -696,7 +700,18 @@ mod tests {
             .extra
             .insert("future_note".into(), Value::String("kept".into()));
         store.save_immutable(&entry).unwrap();
-        assert_eq!(store.get("h-1").unwrap(), entry);
+        let loaded = store.get("h-1").unwrap();
+        assert_eq!(loaded.id, entry.id);
+        assert_eq!(loaded.extra, entry.extra);
+        assert_eq!(
+            durable_config(&loaded.config_snapshot),
+            durable_config(&entry.config_snapshot)
+        );
+        let stored: Value =
+            serde_json::from_slice(&fs::read(store.root().join("h-1.json")).unwrap()).unwrap();
+        assert!(stored
+            .pointer("/config_snapshot/ui/profile_directory")
+            .is_none());
     }
 
     #[test]

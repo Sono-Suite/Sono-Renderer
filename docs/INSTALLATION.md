@@ -167,8 +167,10 @@ Actions publishes build-provenance attestations for release artifacts, but
 these do not replace a Windows Authenticode signature. Windows may show an
 unknown-publisher warning until official code signing is configured.
 
-See [Getting Started](GETTING_STARTED.md), [Troubleshooting](TROUBLESHOOTING.md),
-[Chart Studio](CHART_STUDIO.md), [gameplay presentation and preview](PRESENTATION_STUDIO.md),
-and [Presentation Studio asset profiles](PRESENTATION_STUDIO_ASSETS.md) for
-specific workflows. See [Current limitations](KNOWN_LIMITATIONS.md) before
-relying on optional or platform-limited capabilities.
+See [Getting Started](GETTING_STARTED.md) and
+[Troubleshooting](TROUBLESHOOTING.md) for workflows available in the default
+app. [Chart Studio](CHART_STUDIO.md) and
+[Presentation Studio](PRESENTATION_STUDIO.md) describe retained editor
+implementations whose routes are hidden from default navigation. Review
+[Current limitations](KNOWN_LIMITATIONS.md) before relying on optional or
+platform-limited capabilities.

@@ -3,3 +3,6 @@
 # Microsoft Visual C++ redistributable. Graphics drivers remain a system
 # dependency.
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[build]
+jobs = 2

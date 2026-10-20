@@ -53,9 +53,11 @@ GUI acceptance results have been reviewed.
 - [ ] Verify the packaged assets' redistribution rights and attribution.
 - [ ] Run formatting, Clippy, the full tests, and the optimized test suite.
 - [ ] Run real-engine render/VM-GCC checks and review visual output.
-- [ ] Validate Chart Studio export and import of standalone `level.json.gz`.
+- [ ] Validate the default Quick Render workflow, Program Preview, and export.
+- [ ] If a release build registers Chart Studio, separately validate its
+      standalone LevelData import and export; it is not in the default UI.
 - [ ] Build the Windows installer and portable ZIP from the clean matching tag.
-- [ ] Exercise first launch, Quick Render, Chart Studio, preview, and export on
+- [ ] Exercise first launch, Quick Render, Program Preview, and export on
       a clean Windows user or VM with no Rust toolchain or FFmpeg on PATH.
 - [ ] Exercise the portable archive, upgrade, reinstall, uninstall, and
       preservation of user data and external projects.

@@ -28,6 +28,8 @@ use std::{
 const ENTITY_MEMORY: i64 = 4000;
 const ENTITY_DATA: i64 = 4001;
 const ENTITY_SHARED_MEMORY: i64 = 4002;
+const LEGACY_ENTITY_MEMORY_LENGTH: usize = crate::watch::DEFAULT_ENTITY_MEMORY_LENGTH as usize;
+const LEGACY_ENTITY_DATA_LENGTH: usize = crate::watch::DEFAULT_ENTITY_DATA_LENGTH as usize;
 const TEMPORARY_MEMORY: i64 = 10000;
 const RUNTIME_UPDATE: i64 = 1001;
 const RUNTIME_SKIN_TRANSFORM: i64 = 1002;
@@ -49,6 +51,56 @@ const MIN_PARALLEL_STAGE_ENTITIES: usize = 192;
 const MIN_PARALLEL_BATCH_CALLBACKS: usize = 128;
 const MAX_REPLAY_DATA_UNCOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REPLAY_STREAM_ENTRIES: usize = 1_000_000;
+/// Renderer safeguard for the dense entity-data/shared-memory tables (and the
+/// retained entity-data row copies). This is not a Sonolus protocol limit.
+const MAX_WATCH_ENTITY_STORAGE_BYTES: usize = 256 * 1024 * 1024;
+
+fn checked_watch_memory_lengths(
+    watch: &WatchData,
+    level_entity_count: usize,
+) -> Result<(usize, usize, usize, usize, usize)> {
+    let entity_memory = usize::try_from(watch.entity_memory_length)
+        .context("EngineWatchData entityMemoryLength must be nonnegative")?;
+    let entity_data = usize::try_from(watch.entity_data_length)
+        .context("EngineWatchData entityDataLength must be nonnegative")?;
+    let entity_shared_memory = usize::try_from(watch.entity_shared_memory_length)
+        .context("EngineWatchData entitySharedMemoryLength must be nonnegative")?;
+    let entity_data_slots = level_entity_count
+        .checked_mul(entity_data)
+        .context("EngineWatchData entityDataLength allocation size overflowed")?;
+    let entity_shared_memory_slots = level_entity_count
+        .checked_mul(entity_shared_memory)
+        .context("EngineWatchData entitySharedMemoryLength allocation size overflowed")?;
+    let total_slots = entity_data_slots
+        .checked_mul(2)
+        .and_then(|slots| slots.checked_add(entity_shared_memory_slots))
+        .context("EngineWatchData entity memory allocation size overflowed")?;
+    let total_bytes = total_slots
+        .checked_mul(std::mem::size_of::<f64>())
+        .context("EngineWatchData entity memory byte size overflowed")?;
+    if total_bytes > MAX_WATCH_ENTITY_STORAGE_BYTES {
+        bail!(
+            "EngineWatchData entity memory requires {total_bytes} bytes, exceeding the renderer's {} MiB safety limit",
+            MAX_WATCH_ENTITY_STORAGE_BYTES / (1024 * 1024)
+        );
+    }
+    Ok((
+        entity_memory,
+        entity_data,
+        entity_shared_memory,
+        entity_data_slots,
+        entity_shared_memory_slots,
+    ))
+}
+
+fn zeroed_watch_values(length: usize, label: &str) -> Result<Vec<f64>> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(length)
+        .with_context(|| format!("allocating {length} values for {label}"))?;
+    values.resize(length, 0.0);
+    Ok(values)
+}
 
 fn checked_replay_entry_total(total: usize, additional: usize) -> Result<usize> {
     let total = total
@@ -1028,6 +1080,13 @@ impl<'a> WatchRuntime<'a> {
         }
 
         let level_entity_count = level.entities.len();
+        let (
+            entity_memory_length,
+            entity_data_length,
+            entity_shared_memory_length,
+            entity_data_slots,
+            entity_shared_memory_slots,
+        ) = checked_watch_memory_lengths(watch, level_entity_count)?;
         // The Watch graph is immutable for this runtime. Stack reservation is
         // a graph-wide analysis, so cache it once instead of repeating an
         // O(node-count) scan for every lifecycle callback VM.
@@ -1048,6 +1107,9 @@ impl<'a> WatchRuntime<'a> {
             preprocessed: false,
             context: VmContext {
                 timescale: 1.0,
+                entity_memory_length: Some(entity_memory_length),
+                entity_data_length: Some(entity_data_length),
+                entity_shared_memory_length: Some(entity_shared_memory_length),
                 random_state: Arc::new(AtomicU64::new(crate::runtime::DEFAULT_WATCH_RANDOM_SEED)),
                 ..VmContext::default()
             },
@@ -1117,7 +1179,8 @@ impl<'a> WatchRuntime<'a> {
                 )
             })?;
             let archetype = &runtime.archetype_defs[archetype_index];
-            let entity_data = map_imports(archetype, &source.data, &names, index)?;
+            let entity_data =
+                map_imports(archetype, &source.data, &names, index, entity_data_length)?;
             let name = source
                 .extra
                 .get("name")
@@ -1141,18 +1204,22 @@ impl<'a> WatchRuntime<'a> {
             });
             runtime.pending.push(index);
         }
-        let initial_array = runtime
-            .entities
-            .iter()
-            .flat_map(|entity| (0..32).map(move |slot| entity.entity_data[slot]))
-            .collect();
+        let mut initial_array = zeroed_watch_values(entity_data_slots, "Entity Data Array")?;
+        for entity in &runtime.entities {
+            let start = entity
+                .id
+                .checked_mul(entity_data_length)
+                .context("Entity Data row start overflowed")?;
+            let end = start
+                .checked_add(entity_data_length)
+                .context("Entity Data row end overflowed")?;
+            initial_array[start..end].copy_from_slice(&entity.entity_data);
+        }
         runtime.context.entity_data_array =
             std::sync::Arc::new(std::sync::RwLock::new(initial_array));
-        runtime.context.entity_shared_memory_array =
-            std::sync::Arc::new(std::sync::RwLock::new(vec![
-                0.0;
-                runtime.entities.len() * 32
-            ]));
+        runtime.context.entity_shared_memory_array = std::sync::Arc::new(std::sync::RwLock::new(
+            zeroed_watch_values(entity_shared_memory_slots, "Entity Shared Memory Array")?,
+        ));
         runtime.context.entity_info_array = std::sync::Arc::new(std::sync::RwLock::new(
             runtime
                 .entities
@@ -1482,10 +1549,19 @@ impl<'a> WatchRuntime<'a> {
             if !entity.has_entity_data {
                 continue;
             }
-            let start = entity.id * 32;
+            let length = self
+                .context
+                .entity_data_length
+                .unwrap_or(LEGACY_ENTITY_DATA_LENGTH);
+            let Some(start) = entity.id.checked_mul(length) else {
+                continue;
+            };
+            let Some(end) = start.checked_add(length) else {
+                continue;
+            };
             if let Ok(values) = self.context.entity_data_array.read() {
-                for slot in 0..32 {
-                    entity.entity_data[slot] = values.get(start + slot).copied().unwrap_or(0.0);
+                if let Some(row) = values.get(start..end) {
+                    entity.entity_data.copy_from_slice(row);
                 }
             }
         }
@@ -2207,7 +2283,7 @@ impl<'a> WatchRuntime<'a> {
         self.frame_vm_evaluations += output.evaluations as u64;
         self.frame_spawn_requests += requests.len() as u64;
         if self.entities[task.entity_id].has_entity_data && stage == LifecycleStage::Preprocess {
-            self.entities[task.entity_id].entity_data = self.entity_data_row(task.entity_id);
+            self.entities[task.entity_id].entity_data = self.entity_data_row(task.entity_id)?;
         }
         let (global_memory, entity_memory) = output.memory.into_watch_entity_parts(
             ENTITY_MEMORY,
@@ -2377,7 +2453,7 @@ impl<'a> WatchRuntime<'a> {
         self.frame_vm_evaluations += vm.evaluation_count() as u64;
         self.frame_spawn_requests += requests.len() as u64;
         if self.entities[id].has_entity_data && stage == LifecycleStage::Preprocess {
-            self.entities[id].entity_data = self.entity_data_row(id);
+            self.entities[id].entity_data = self.entity_data_row(id)?;
         }
         let (global_memory, entity_memory) = vm.memory.into_watch_entity_parts(
             ENTITY_MEMORY,
@@ -2521,7 +2597,11 @@ impl<'a> WatchRuntime<'a> {
             .ok_or_else(|| anyhow!("Spawn references unknown archetype id {archetype_id}"))?;
         let id = self.entities.len();
         let mut memory = Memory::new();
-        for (slot, value) in data.into_iter().enumerate() {
+        let memory_length = self
+            .context
+            .entity_memory_length
+            .unwrap_or(LEGACY_ENTITY_MEMORY_LENGTH);
+        for (slot, value) in data.into_iter().take(memory_length).enumerate() {
             memory.set(ENTITY_MEMORY, slot, value);
         }
         self.entities.push(WatchEntity {
@@ -2544,18 +2624,24 @@ impl<'a> WatchRuntime<'a> {
         Ok(id)
     }
 
-    fn entity_data_row(&self, id: usize) -> Vec<f64> {
-        let start = id.saturating_mul(32);
-        self.context
-            .entity_data_array
-            .read()
-            .ok()
-            .map(|values| {
-                (0..32)
-                    .map(|slot| values.get(start + slot).copied().unwrap_or(0.0))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![0.0; 32])
+    fn entity_data_row(&self, id: usize) -> Result<Vec<f64>> {
+        let length = self
+            .context
+            .entity_data_length
+            .unwrap_or(LEGACY_ENTITY_DATA_LENGTH);
+        let mut row = zeroed_watch_values(length, "Entity Data entity row")?;
+        let Some(start) = id.checked_mul(length) else {
+            return Ok(row);
+        };
+        let Some(end) = start.checked_add(length) else {
+            return Ok(row);
+        };
+        if let Ok(values) = self.context.entity_data_array.read() {
+            if let Some(source) = values.get(start..end) {
+                row.copy_from_slice(source);
+            }
+        }
+        Ok(row)
     }
 
     fn set_entity_info_active(&mut self, id: usize, active: bool) {
@@ -2630,6 +2716,7 @@ fn map_imports(
     raw_data: &Value,
     names: &BTreeMap<String, usize>,
     entity_index: usize,
+    entity_data_length: usize,
 ) -> Result<Vec<f64>> {
     let data = raw_data
         .as_array()
@@ -2657,18 +2744,20 @@ fn map_imports(
             bail!("entity {entity_index} contains duplicate data field {name:?}");
         }
     }
-    let mut result = vec![0.0; 32];
+    let mut result = zeroed_watch_values(entity_data_length, "Entity Data imports")?;
     let mut occupied = BTreeSet::new();
     for import in &archetype.imports {
         let name = import
             .get("name")
             .and_then(Value::as_str)
             .context("archetype import is missing name")?;
-        let index = import
-            .get("index")
-            .and_then(Value::as_u64)
-            .context("archetype import is missing a nonnegative index")?
-            as usize;
+        let index = usize::try_from(
+            import
+                .get("index")
+                .and_then(Value::as_u64)
+                .context("archetype import is missing a nonnegative index")?,
+        )
+        .context("archetype import index does not fit this platform")?;
         if index >= result.len() {
             bail!(
                 "archetype {} import index {index} exceeds Entity Data block",
@@ -2755,6 +2844,293 @@ mod ui_configuration_tests {
         }))
         .unwrap();
         (watch, level)
+    }
+
+    #[test]
+    fn watch_memory_lengths_custom_drive_imports_strides_bounds_and_callback_persistence() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 3,
+            "entityDataLength": 40,
+            "entitySharedMemoryLength": 40,
+            "archetypes":[{
+                "name":"Worker",
+                "imports":[{"name":"FAR","index":39}],
+                "preprocess":{"index":31},
+                "initialize":{"index":37}
+            }],
+            "nodes":[
+                {"value":4003}, {"value":0}, {"func":"Get","args":[0,1]},
+                {"value":4000}, {"value":2}, {"func":"Set","args":[3,4,2]},
+                {"value":3}, {"value":999}, {"func":"Set","args":[3,6,7]},
+                {"func":"Get","args":[3,6]},
+                {"value":6000}, {"func":"Set","args":[10,2,9]},
+                {"value":4001}, {"value":39}, {"func":"Get","args":[12,13]},
+                {"value":6001}, {"func":"Set","args":[15,2,14]},
+                {"value":4001}, {"value":40},
+                {"func":"Set","args":[17,18,7]}, {"func":"Get","args":[17,18]},
+                {"value":6002}, {"func":"Set","args":[21,2,20]},
+                {"value":4002}, {"value":39}, {"func":"Set","args":[23,24,2]},
+                {"value":40}, {"func":"Set","args":[23,26,7]},
+                {"func":"Get","args":[23,26]}, {"value":6003},
+                {"func":"Set","args":[29,2,28]},
+                {"func":"Execute","args":[5,8,11,16,19,22,25,27,30]},
+                {"value":4002}, {"value":39}, {"func":"Get","args":[32,33]},
+                {"value":4000}, {"value":0}, {"func":"Set","args":[35,36,34]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[
+                {"archetype":"Worker","data":[{"name":"FAR","value":11}]},
+                {"archetype":"Worker","data":[{"name":"FAR","value":22}]}
+            ]
+        }))
+        .unwrap();
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        assert_eq!(runtime.context.entity_memory_length, Some(3));
+        assert_eq!(runtime.context.entity_data_length, Some(40));
+        assert_eq!(runtime.context.entity_shared_memory_length, Some(40));
+        assert_eq!(runtime.context.entity_data_array.read().unwrap().len(), 80);
+        assert_eq!(
+            runtime
+                .context
+                .entity_shared_memory_array
+                .read()
+                .unwrap()
+                .len(),
+            80
+        );
+        assert_eq!(runtime.context.entity_data_array.read().unwrap()[39], 11.0);
+        assert_eq!(runtime.context.entity_data_array.read().unwrap()[79], 22.0);
+
+        runtime.preprocess().unwrap();
+        let data = runtime.context.entity_data_array.read().unwrap();
+        let shared = runtime.context.entity_shared_memory_array.read().unwrap();
+        for entity_id in 0..2 {
+            assert_eq!(data[entity_id * 40 + 39], [11.0, 22.0][entity_id]);
+            assert_eq!(shared[entity_id * 40 + 39], entity_id as f64);
+            assert!(shared[entity_id * 40..entity_id * 40 + 39]
+                .iter()
+                .all(|value| *value == 0.0));
+            assert_eq!(
+                runtime.entities[entity_id].memory.get(4000, 2),
+                entity_id as f64
+            );
+            assert_eq!(runtime.entities[entity_id].memory.get(4000, 3), 0.0);
+            assert_eq!(runtime.global_memory.get(6000, entity_id), 0.0);
+            assert_eq!(runtime.global_memory.get(6002, entity_id), 0.0);
+            assert_eq!(runtime.global_memory.get(6003, entity_id), 0.0);
+            assert_eq!(
+                runtime.global_memory.get(6001, entity_id),
+                [11.0, 22.0][entity_id]
+            );
+        }
+        drop(data);
+        drop(shared);
+
+        // Initialize reads the Shared Memory value written during preprocess
+        // and persists it into Entity Memory across callback invocations.
+        runtime.frame(0.0).unwrap();
+        for entity_id in 0..2 {
+            assert_eq!(
+                runtime.entities[entity_id].memory.get(4000, 0),
+                entity_id as f64
+            );
+            assert_eq!(
+                runtime.entities[entity_id].memory.get(4000, 2),
+                entity_id as f64
+            );
+        }
+    }
+
+    #[test]
+    fn watch_memory_lengths_omitted_match_explicit_legacy_storage_sizes() {
+        let mut omitted_json = serde_json::json!({
+            "archetypes":[{"name":"Worker","imports":[{"name":"A","index":31}]}],
+            "nodes":[]
+        });
+        let mut explicit_json = omitted_json.clone();
+        explicit_json["entityMemoryLength"] = serde_json::json!(64);
+        explicit_json["entityDataLength"] = serde_json::json!(32);
+        explicit_json["entitySharedMemoryLength"] = serde_json::json!(32);
+        let omitted: WatchData = serde_json::from_value(omitted_json.take()).unwrap();
+        let explicit: WatchData = serde_json::from_value(explicit_json).unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[
+                {"archetype":"Worker","data":[{"name":"A","value":7}]},
+                {"archetype":"Worker","data":[{"name":"A","value":9}]}
+            ]
+        }))
+        .unwrap();
+        let omitted_runtime = WatchRuntime::new(&omitted, &level).unwrap();
+        let explicit_runtime = WatchRuntime::new(&explicit, &level).unwrap();
+        assert_eq!(omitted_runtime.context.entity_memory_length, Some(64));
+        assert_eq!(omitted_runtime.context.entity_data_length, Some(32));
+        assert_eq!(
+            omitted_runtime.context.entity_shared_memory_length,
+            Some(32)
+        );
+        assert_eq!(
+            *omitted_runtime.context.entity_data_array.read().unwrap(),
+            *explicit_runtime.context.entity_data_array.read().unwrap()
+        );
+        assert_eq!(
+            *omitted_runtime
+                .context
+                .entity_shared_memory_array
+                .read()
+                .unwrap(),
+            *explicit_runtime
+                .context
+                .entity_shared_memory_array
+                .read()
+                .unwrap()
+        );
+        assert_eq!(
+            omitted_runtime.entities[0].entity_data,
+            explicit_runtime.entities[0].entity_data
+        );
+        assert_eq!(
+            omitted_runtime.entities[1].entity_data,
+            explicit_runtime.entities[1].entity_data
+        );
+    }
+
+    #[test]
+    fn watch_memory_lengths_zero_are_empty_and_all_invalid_accesses_are_safe() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 0,
+            "entityDataLength": 0,
+            "entitySharedMemoryLength": 0,
+            "archetypes":[{"name":"Worker","preprocess":{"index":19}}],
+            "nodes":[
+                {"value":4000}, {"value":0}, {"value":13}, {"func":"Set","args":[0,1,2]},
+                {"func":"Get","args":[0,1]}, {"value":6000},
+                {"value":4003}, {"func":"Get","args":[6,1]}, {"func":"Set","args":[5,7,4]},
+                {"value":4001}, {"func":"Set","args":[9,1,2]},
+                {"func":"Get","args":[9,1]}, {"value":6001}, {"func":"Set","args":[12,7,11]},
+                {"value":4002}, {"func":"Set","args":[14,1,2]},
+                {"func":"Get","args":[14,1]}, {"value":6002}, {"func":"Set","args":[17,7,16]},
+                {"func":"Execute","args":[3,8,10,13,15,18]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[{"archetype":"Worker","data":[]}]
+        }))
+        .unwrap();
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        assert!(runtime.context.entity_data_array.read().unwrap().is_empty());
+        assert!(runtime
+            .context
+            .entity_shared_memory_array
+            .read()
+            .unwrap()
+            .is_empty());
+        runtime.preprocess().unwrap();
+        assert_eq!(runtime.entities[0].memory.get(4000, 0), 0.0);
+        assert_eq!(runtime.global_memory.get(6000, 0), 0.0);
+        assert_eq!(runtime.global_memory.get(6001, 0), 0.0);
+        assert_eq!(runtime.global_memory.get(6002, 0), 0.0);
+    }
+
+    #[test]
+    fn watch_memory_lengths_negative_indices_read_zero_and_ignore_writes() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 1,
+            "entityDataLength": 1,
+            "entitySharedMemoryLength": 1,
+            "archetypes":[{"name":"Worker","preprocess":{"index":20}}],
+            "nodes":[
+                {"value":4000}, {"value":-1}, {"value":77}, {"func":"Set","args":[0,1,2]},
+                {"func":"Get","args":[0,1]}, {"value":6000},
+                {"value":4003}, {"value":0}, {"func":"Get","args":[6,7]},
+                {"func":"Set","args":[5,8,4]},
+                {"value":4001}, {"func":"Set","args":[10,1,2]},
+                {"func":"Get","args":[10,1]}, {"value":6001}, {"func":"Set","args":[13,8,12]},
+                {"value":4002}, {"func":"Set","args":[15,1,2]},
+                {"func":"Get","args":[15,1]}, {"value":6002}, {"func":"Set","args":[18,8,17]},
+                {"func":"Execute","args":[3,9,11,14,16,19]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[{"archetype":"Worker","data":[]}]
+        }))
+        .unwrap();
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        runtime.preprocess().unwrap();
+        assert_eq!(runtime.entities[0].memory.get(4000, 0), 0.0);
+        assert_eq!(runtime.context.entity_data_array.read().unwrap()[0], 0.0);
+        assert_eq!(
+            runtime.context.entity_shared_memory_array.read().unwrap()[0],
+            0.0
+        );
+        assert_eq!(runtime.global_memory.get(6000, 0), 0.0);
+        assert_eq!(runtime.global_memory.get(6001, 0), 0.0);
+        assert_eq!(runtime.global_memory.get(6002, 0), 0.0);
+    }
+
+    #[test]
+    fn watch_memory_lengths_reject_bad_imports_and_unsafe_array_sizes() {
+        let bad_import: WatchData = serde_json::from_value(serde_json::json!({
+            "entityDataLength": 40,
+            "archetypes":[{"name":"Worker","imports":[{"name":"TOO_FAR","index":40}]}]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({
+            "entities":[{"archetype":"Worker","data":[]}]
+        }))
+        .unwrap();
+        assert!(WatchRuntime::new(&bad_import, &level)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("import index 40"));
+
+        let oversized: WatchData = serde_json::from_value(serde_json::json!({
+            "entityDataLength": 2147483647
+        }))
+        .unwrap();
+        assert!(WatchRuntime::new(&oversized, &level)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("renderer's 256 MiB safety limit"));
+        assert!(checked_watch_memory_lengths(&bad_import, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn watch_memory_lengths_spawned_entity_prefix_is_configured() {
+        let watch: WatchData = serde_json::from_value(serde_json::json!({
+            "entityMemoryLength": 3,
+            "entityDataLength": 0,
+            "entitySharedMemoryLength": 0,
+            "archetypes":[{"name":"Spawned"}],
+            "updateSpawn":5,
+            "nodes":[
+                {"value":0}, {"value":10}, {"value":20}, {"value":30}, {"value":40},
+                {"func":"Spawn","args":[0,1,2,3,4]}
+            ]
+        }))
+        .unwrap();
+        let level: LevelData = serde_json::from_value(serde_json::json!({"entities":[]})).unwrap();
+        let mut runtime = WatchRuntime::new(&watch, &level).unwrap();
+        let report = runtime.frame(0.0).unwrap();
+        assert_eq!(report.spawned, vec![0]);
+        assert!(runtime.entities[0].spawned);
+        assert!(!runtime.entities[0].has_entity_data);
+        assert!(!runtime.entities[0].has_shared_memory);
+        assert_eq!(runtime.entities[0].memory.get(4000, 0), 10.0);
+        assert_eq!(runtime.entities[0].memory.get(4000, 2), 30.0);
+        assert_eq!(runtime.entities[0].memory.get(4000, 3), 0.0);
+        assert!(runtime.context.entity_data_array.read().unwrap().is_empty());
+        assert!(runtime
+            .context
+            .entity_shared_memory_array
+            .read()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

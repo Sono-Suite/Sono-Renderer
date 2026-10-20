@@ -42,7 +42,7 @@ Get-ChildItem artifacts/ui-validation -Filter '*.png' |
   Set-Content artifacts/ui-validation/SHA256SUMS.txt
 ```
 
-The frames are visually inspected against the supplied screenshot and `TestingSuite/ui_ref/Larp 64x Preview.mp4`. The CPU Watch capture uses the engine-selected `Nexint-V4-BG-min` background and `NexintWaterMark` particles, but the level fixture does not provide the character/music-video layer shown in the reference movie. This mismatch is recorded in the [Follow-up #6 report](../SONO_RENDERER_UI_FOLLOWUP_6_REPORT.md); the HUD PNGs remain production compositor output over real Watch-rendered frames.
+The frames are visually inspected against the supplied screenshot and `TestingSuite/ui_ref/Larp 64x Preview.mp4`. The CPU Watch capture uses the engine-selected `Nexint-V4-BG-min` background and `NexintWaterMark` particles, but the level fixture does not provide the character/music-video layer shown in the reference movie. This mismatch is recorded in the [Follow-up #6 report](../docs/reports/follow-ups/SONO_RENDERER_UI_FOLLOWUP_6_REPORT.md); the HUD PNGs remain production compositor output over real Watch-rendered frames.
 
 ## Event adapter boundary
 

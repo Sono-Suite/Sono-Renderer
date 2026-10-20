@@ -23,6 +23,14 @@ Notification delivery is disabled in the exported snapshot, and job-manager
 scheduling settings are replaced with defaults; credentials and local queue
 policy are not portable render inputs.
 
+Gameplay UI `pack://` references are resolved through the configured asset
+pack and asset root, including after history has been reloaded without its
+runtime path cache. The logical reference stays in the effective config while
+the manifest hashes the resolved file. An unresolved reference, including a
+relative asset path without a recoverable profile base, is recorded without a
+path hint or content hash and verifies as missing. The renderer does not hash
+such paths relative to the process working directory.
+
 The manifest's canonical SHA-256 covers the content identities, normalized
 effective configuration, renderer/backend identity, output metadata, stored
 references, and unknown fields. It excludes path hints, output location,

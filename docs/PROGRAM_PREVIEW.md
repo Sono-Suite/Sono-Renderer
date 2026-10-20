@@ -29,8 +29,9 @@ waits for it to finish before closing. The time slider uses the configured
 start and duration even when Whole Chart is selected; Whole Chart's inferred
 end is only known during export.
 
-This Program Preview remains separate from the general-purpose **Presentation
-Studio**. Program Preview seeks the production Watch renderer; Presentation
-Studio imports local media into a standalone composition and uses FFmpeg for
-still-frame previews and export. See [Presentation Studio](PRESENTATION_STUDIO.md)
-for its composition workflow and limits.
+This Program Preview remains separate from the retained **Presentation
+Studio** implementation. Program Preview seeks the production Watch renderer;
+Presentation Studio imports local media into a standalone composition and uses
+FFmpeg for still-frame previews and export. Presentation Studio has no route in
+the default desktop interface. See [Presentation Studio](PRESENTATION_STUDIO.md)
+for its implementation and limits.

@@ -8,6 +8,13 @@ coverage, structural findings, and an optional bounded dynamic result.
 Schema version 2 adds `approximate` to the per-operation VM implementation
 status vocabulary; legacy report fields and their names remain available.
 
+The analyzer is Watch-centric. It reports evidence from package structure,
+renderer operation coverage, and (optionally) a bounded Watch preprocess run;
+it does not validate interactive Sonolus Play or Preview behavior or certify a
+Sonolus version as a whole. The three 1.1.5 Watch memory-length fields are
+implemented by the renderer, but that narrow support does not imply complete
+1.1.5 compatibility. See [current limitations](KNOWN_LIMITATIONS.md).
+
 ## Run it
 
 ```text
@@ -72,8 +79,10 @@ malformed.
 
 The category list includes a **Chart Studio** breakdown for raw LevelData
 support, this document's in-memory parse/serialize round-trip, authoring-schema
-availability, high-level editor availability, and preview. These dimensions
-remain separate from Watch VM and renderer compatibility. The analyzer does
+availability, high-level editor availability, and preview. This category
+describes the retained implementation; Chart Studio is not registered in the
+default desktop navigation. These dimensions remain separate from Watch VM
+and renderer compatibility. The analyzer does
 not accept/load a Chart Studio schema file, so schema availability is marked
 unknown and the high-level path is reported as partial; Generic / Raw Mode is
 the fallback. A matching schema can add declared authoring controls in Chart
