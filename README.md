@@ -2,88 +2,92 @@
 
 Please scroll down to find the AI disclosure section.
 
-This is a Sonolus renderer, with compatibility suited for Next Sekai, Next Rush, and Horizon charts.
+This is a basic Sonolus renderer, with compatibility suited for Next Sekai, Next Rush, and Horizon charts.
 
-This project works by simulating the Watch mode function on Sonolus. By simulating the Watch mode, this project is able to generate flawless recordings of MVs using any given engine zip file, SCP file, etc.
+This project has a basic GUI to help you navigate it easier.
 
-If you wish to get a .scp and engine zip, please reference Sono-Server, as Sono-Server has prepackaged .scp files and engine folders! Just zip an engine folder, and you're good :P
+SCP files and engine files are either included or in Sono-Server.
 
-This project has a basic GUI, but also supports command line inputs:
+## What it does
 
-```text
-cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --start-time 0 --duration 10 --fps 60 --width 1920 --height 1080
-cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --whole-chart
+- Renders a MP4 file.
+- Supports BGM, engine sound effects, particles, optional video backgrounds,
+  gameplay UI profiles, and watermark settings.
+- Supports WGPU natively. CPU rendering is left as a failsafe.
+- Two types of renderers are supported: Sono-GCC and Sono-VM. Sono-GCC is the native compiled renderer.
+- Provides render jobs, history, profiles, configuration files, diagnostics,
+  and content-based render manifests.
+- Preview is included, which renders a specific frame.
+
+## Requirements and platform status
+
+- Windows x86-64 is natively supported.
+- A web implementation is currently in the works...
+
+## Build and launch
+
+From a source checkout on Windows:
+
+```powershell
+cargo build --release --offline
+cargo run --release -- gui
 ```
 
-## Watch execution modes
+See [Installation](docs/INSTALLATION.md) for release availability, portable installs, FFmpeg, data storage, and updates.
 
-Sono VM / interpreter remains the default. `render-video` and `run-watch` accept
-`--vm interpreter` or `--vm sono-gcc` (also `--vm=...`). The existing GUI has
-the same setting under **Video / Watch execution**.
+## Quick Start
 
-```text
-cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --vm interpreter
-cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --vm sono-gcc
-cargo run --release -- run-watch <engine.zip> <level.json.gz> --vm sono-gcc
-```
+1. Open **Quick Render**.
+2. Select an engine ZIP, a Sonolus LevelData chart, and its resource package.
+   The renderer accepts standalone JSON or gzip-compressed JSON LevelData and
+   legacy level ZIP packages; resources are supplied as SCP/ZIP packages.
+3. Choose music when **Include music** is on, then set the output MP4, range,
+   resolution, and frame rate.
+4. Select **Check inputs** and review any compatibility findings.
+5. Select **Queue render**. Follow progress in **Jobs & History**, then open
+   the completed video or its output folder.
 
-## Watch CPU scheduling
+Projects and saved render profiles are optional. Dropping files or a folder
+can discover input roles; ambiguous matches require a choice. See
+[Getting Started](docs/GETTING_STARTED.md) for the full workflow.
 
-Parallel Watch scheduling is the default. Independent callback batches use a
-persistent bounded worker pool and merge their results in source order. Small
-batches and callbacks that touch shared state stay on the ordered path. Use
-`--watch-workers` to cap worker count, or `--single-threaded` to disable the
-scheduler and avoid creating workers:
+## CLI rendering
 
-```text
-cargo run --release -- run-watch <engine.zip> <level.json.gz> --watch-workers 4
-cargo run --release -- run-watch <engine.zip> <level.json.gz> --single-threaded
-cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music-file> <output.mp4> --single-threaded
-```
-
-The GUI has the same scheduler checkbox. `run-watch` also accepts
-`--no-vm-accounting` for production-like CPU measurements without per-operation
-diagnostic counters; normal runs keep those counters enabled.
-
-Sono-GCC is an opt-in hybrid path. It compiles 75 kinds of eligible scalar
-operations directly, including arithmetic, math, interpolation, and 32 easing
-variants. The other 86 Watch operation kinds can cross an ordered scalar cut:
-WatchVm evaluates the operation with authoritative semantics, then a native
-parent can consume its exact `f64` result. The cut does not move the operation
-into native code or call back from the DLL into WatchVm. Graphs without a safe
-native parent, or beyond static region limits, continue entirely in WatchVm.
-Elastic easing remains interpreted because native code changed a NaN payload
-in differential testing. Watch tracing also forces interpreter execution for
-traced callbacks.
-
-Native DLL generation currently requires Windows and an available Rust
-compiler (`rustc`). Compile or load failures fall back to the interpreter;
-unsupported graph paths always remain there. Selecting an engine while
-Sono-GCC is enabled starts background graph loading and precompilation. The GUI
-reports cache lookup, compilation, partial coverage, and fallback status;
-rendering remains available while compilation runs. GUI precompilation,
-`compile-engine <engine.zip>`, and rendering share the exact-graph cache across
-processes when the cache directory is writable. Cache identity includes the
-graph, backend/runtime ABI, compiler identity, target, and build flags.
+This project supports command line inputs:
 
 ```text
-cargo run --release -- compile-engine <engine.zip>
+cargo run --release -- render-video <engine.zip> <resources.scp> <level.json.gz> <music.ogg> <output.mp4> --whole-chart
 ```
 
-The current operation inventory and per-operation implementation/test status
-are in [the coverage matrix](SONO_GCC_COVERAGE.md). The implementation report
-records real-engine parity, cache timings, scalar-cut counts, and remaining limits.
-The [performance report](SONO_GCC_PERFORMANCE_REPORT.md) contains repeatable
-real-chart benchmarks, cache-hit breakdowns, and the current export bottleneck.
+If you need more fine tuning: Use `cargo run --release -- --help` and the command-specific `--help` for the
+current options.
 
-In the latest repeated release benchmarks, GCC reduced isolated Watch time on
-five of six real fixtures and tied at millisecond resolution on LIMBO. The
-20-frame Larp SFX export remained 7.4% slower end to end under GCC, so Sono-GCC
-is intentionally not the default. See the [implementation report](SONO_GCC_IMPLEMENTATION_REPORT.md)
-for the tested operation subset and parity matrix, and the [performance report](SONO_GCC_PERFORMANCE_REPORT.md)
-for current timings and benchmark details.
+See [shared configuration](docs/USER_CONFIGURATION.md) and
+[workspaces and commands](docs/WORKSPACE_COMMANDS.md).
 
-no documentation lol have fun good luck with cli :sob:
+## Rendering and compatibility scope
+
+See these files:
+- [compatibility analyzer](docs/COMPATIBILITY_ANALYZER.md)
+- [current limitations](docs/KNOWN_LIMITATIONS.md)
+- [coverage matrix](docs/development/sono-gcc/SONO_GCC_COVERAGE.md)
+
+TL:DR, This renderer uses the Sonolus Watch data for chart rendering, does not implement play or preview modes. Sonolus v1.1.5 features are technically implemented, but may not work correctly.
+
+## Documentation
+
+The [documentation index](docs/README.md) organizes user guides, technical
+references, development and testing material, compatibility notes, and
+historical reports. The Chart Studio and Presentation Studio implementation
+guides are marked as retained references because those routes are hidden from
+the default desktop navigation.
+
+## Contributing, attribution, and license
+
+For development context, start with the [architecture guide](docs/ARCHITECTURE.md)
+and [workspace guide](docs/WORKSPACE_COMMANDS.md). The code is licensed under
+the [MIT License](LICENSE). Repository artwork and media may have separate
+distribution terms; see [installation notes](docs/INSTALLATION.md).
 
 legal jargan lol:
 
@@ -104,4 +108,4 @@ Credit is given to acknowledge the people who made related works that contribute
 
 All developers whose code was provided to AI as a development reference were made explicitly aware and gave permission for my use case of their code. Again, this permission does not imply endorsement of Sono-Renderer.
 
-This program was built and tested against Sonolus v1.1.4.
+This program was built and tested against Sonolus v1.1.4. There is limited support for Sonolus v1.1.5, as it's not yet out.
