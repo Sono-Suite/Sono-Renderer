@@ -2,6 +2,10 @@
 
 Please scroll down to find the AI disclosure section.
 
+Web Ver: https://sono.nexint.ca/renderer
+
+Files: https://files.nexint.ca/share/mei2S15D
+
 This is a basic Sonolus renderer, with compatibility suited for Next Sekai, Next Rush, and Horizon charts.
 
 This project has a basic GUI to help you navigate it easier.
